@@ -256,7 +256,7 @@ const _timelineEntries = <TimelineEntry>[
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  DESCUBRIMIENTO — Enlaces externos (tú los reemplazas)
+//  DESCUBRIMIENTO — 4 videos de YouTube (tú pegas los links reales)
 // ═══════════════════════════════════════════════════════════════════════════
 const _discoveryItems = <DiscoveryItem>[
   DiscoveryItem(
@@ -264,7 +264,8 @@ const _discoveryItems = <DiscoveryItem>[
     subtitle: 'Video educativo · YouTube',
     thumbnailUrl:
         'https://images.unsplash.com/photo-1532996122724-e3c354a0b15b?w=600',
-    externalUrl: 'https://www.youtube.com/results?search_query=planta+de+reciclaje+para+niños',
+    // 👇 PEGA AQUÍ EL LINK DEL VIDEO 1
+    externalUrl: 'https://www.youtube.com/watch?v=Enlmw0NL67c&list=PLTywNBit0lFA1ygWHgnlIyBHATeHYdYB8',
     color: EcoPalette.grassGreen,
     kind: DiscoveryKind.video,
   ),
@@ -273,45 +274,30 @@ const _discoveryItems = <DiscoveryItem>[
     subtitle: 'Video animado · YouTube',
     thumbnailUrl:
         'https://images.unsplash.com/photo-1605600659908-0ef719419d41?w=600',
-    externalUrl: 'https://www.youtube.com/results?search_query=reciclaje+botella+plastico+niños',
+    // 👇 PEGA AQUÍ EL LINK DEL VIDEO 2
+    externalUrl: 'https://www.youtube.com/watch?v=17v70o0QkbM',
     color: EcoPalette.skyBlue,
     kind: DiscoveryKind.video,
   ),
   DiscoveryItem(
     title: 'De botella a camiseta',
-    subtitle: 'Cápsula · YouTube',
+    subtitle: 'Cápsula educativa · YouTube',
     thumbnailUrl:
         'https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=600',
-    externalUrl: 'https://www.youtube.com/results?search_query=botella+plastico+camiseta+reciclaje',
+    // 👇 PEGA AQUÍ EL LINK DEL VIDEO 3
+    externalUrl: 'https://www.youtube.com/watch?v=qvw5Fm1KCeo',
     color: EcoPalette.warmOrange,
     kind: DiscoveryKind.video,
   ),
   DiscoveryItem(
     title: 'Del orgánico al compost',
-    subtitle: 'Cápsula · YouTube',
+    subtitle: 'Cápsula educativa · YouTube',
     thumbnailUrl:
         'https://images.unsplash.com/photo-1416879595882-3373a0480b5b?w=600',
-    externalUrl: 'https://www.youtube.com/results?search_query=compostaje+para+niños',
+    // 👇 PEGA AQUÍ EL LINK DEL VIDEO 4
+    externalUrl: 'https://www.youtube.com/watch?v=cIOkj7sMrPo',
     color: EcoPalette.earthBrown,
     kind: DiscoveryKind.video,
-  ),
-  DiscoveryItem(
-    title: 'Audio-cuento: La Tierra feliz',
-    subtitle: 'Audio · Spotify',
-    thumbnailUrl:
-        'https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=600',
-    externalUrl: 'https://open.spotify.com/search/cuentos%20infantiles%20naturaleza',
-    color: EcoPalette.softPurple,
-    kind: DiscoveryKind.audio,
-  ),
-  DiscoveryItem(
-    title: 'Las 3R: Reduce, Reutiliza, Recicla',
-    subtitle: 'Artículo · National Geographic Kids',
-    thumbnailUrl:
-        'https://images.unsplash.com/photo-1532996122724-e3c354a0b15b?w=600',
-    externalUrl: 'https://kids.nationalgeographic.com/',
-    color: EcoPalette.tealAccent,
-    kind: DiscoveryKind.article,
   ),
 ];
 
@@ -1462,7 +1448,7 @@ class _TimelineCardVertical extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  TAB 3 — DESCUBRIMIENTO (URLs externas con url_launcher)
+//  TAB 3 — DESCUBRIMIENTO (4 videos de YouTube con url_launcher)
 // ═══════════════════════════════════════════════════════════════════════════
 class _DiscoveryCornerTab extends StatelessWidget {
   const _DiscoveryCornerTab();
@@ -1507,6 +1493,8 @@ class _DiscoveryCardWidget extends StatelessWidget {
     return GestureDetector(
       onTap: () => _launchExternal(context),
       child: Container(
+        // 👇 altura fija: evita el "hasSize is not true"
+        height: thumbSize,
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(18),
@@ -1519,7 +1507,8 @@ class _DiscoveryCardWidget extends StatelessWidget {
           ],
         ),
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          // 👇 ya no usamos stretch; la altura la da el Container
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             // Miniatura + overlay con icono según tipo
             ClipRRect(
@@ -1557,10 +1546,14 @@ class _DiscoveryCardWidget extends StatelessWidget {
             ),
             Expanded(
               child: Padding(
-                padding: EdgeInsets.all(isSmall ? 9 : 12),
+                padding: EdgeInsets.symmetric(
+                  horizontal: isSmall ? 9 : 12,
+                  vertical: 8,
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Container(
                       padding: const EdgeInsets.symmetric(
@@ -1645,6 +1638,11 @@ class _DiscoveryCardWidget extends StatelessWidget {
     final uri = Uri.tryParse(item.externalUrl);
     if (uri == null) {
       _toast(context, 'Enlace inválido.');
+      return;
+    }
+    // 👇 Si el link sigue siendo el placeholder, avisa en vez de fallar
+    if (item.externalUrl.contains('XXXXXXXXXXX')) {
+      _toast(context, 'Aún no hay link asignado para este video.');
       return;
     }
     try {

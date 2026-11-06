@@ -101,7 +101,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                           const SizedBox(height: 8),
                           const Text(
-                            "MANUAL DEL SISTEMA WEB",
+                            "MUNDO VERDE",
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               fontSize: 22,
@@ -247,7 +247,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
                       child: Text(
-                        "© Manual del Sistema Web • ${DateTime.now().year}",
+                        "© Incos - El Alto • ${DateTime.now().year}",
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: AppColors.primary,

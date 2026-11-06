@@ -67,6 +67,7 @@ class DatabaseHelper {
     await _seedRoles(db);
     await _seedAdmin(db);
     await _seedEstadisticasIniciales(db);
+    await _seedDemoUsuarios(db);
   }
 
   // ==========================================
@@ -77,6 +78,7 @@ class DatabaseHelper {
       await _runDDLv2(db);
       await _seedRoles(db); // agrega MAESTRO, PADRE, NIÑO si faltan
       await _seedEstadisticasIniciales(db);
+      await _seedDemoUsuarios(db);
     }
   }
 
@@ -318,9 +320,9 @@ class DatabaseHelper {
     await db.insert("usuario", {
       "rol_id": rolAdminId,
       "nombre_usuario": "admin",
-      "nombres": "Juan Pablo",
-      "ap_paterno": "Ramirez",
-      "ap_materno": "Aguilar",
+      "nombres": "Ruth Carina",
+      "ap_paterno": "Jimenez",
+      "ap_materno": "Huaypara",
       "correo": "admin@gmail.com",
       "contrasena": "1234",
       "estado": "ACTIVO",
@@ -368,6 +370,465 @@ class DatabaseHelper {
         VALUES (?, ?, ?, ?)
       ''', [usuarioId, entry.key, entry.value, now]);
     }
+  }
+
+  // ==========================================
+  // HELPERS INTERNOS PARA SEEDERS
+  // ==========================================
+  Future<int?> _getRolId(Database db, String nombreRol) async {
+    final rows = await db.query(
+      'rol',
+      columns: ['id'],
+      where: 'UPPER(nombre) = UPPER(?)',
+      whereArgs: [nombreRol],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first['id'] as int;
+  }
+
+  Future<int?> _getUsuarioIdByUsername(Database db, String username) async {
+    final rows = await db.query(
+      'usuario',
+      columns: ['id'],
+      where: 'LOWER(nombre_usuario) = LOWER(?)',
+      whereArgs: [username],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first['id'] as int;
+  }
+
+  Future<int?> _getUsuarioIdByCorreo(Database db, String correo) async {
+    final rows = await db.query(
+      'usuario',
+      columns: ['id'],
+      where: 'LOWER(correo) = LOWER(?)',
+      whereArgs: [correo],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first['id'] as int;
+  }
+
+  // ==========================================
+  // SEEDER DEMO: USUARIOS (MAESTROS, PADRES, NIÑOS)
+  // Idempotente: no duplica si ya existen.
+  // ==========================================
+  Future<void> _seedDemoUsuarios(Database db) async {
+    final rolMaestroId = await _getRolId(db, 'MAESTRO');
+    final rolPadreId = await _getRolId(db, 'PADRE');
+    final rolNinoId = await _getRolId(db, 'NIÑO');
+
+    if (rolMaestroId == null || rolPadreId == null || rolNinoId == null) {
+      // ignore: avoid_print
+      print('⚠️ Seeder demo: faltan roles, se omite.');
+      return;
+    }
+
+    final now = DateTime.now().toIso8601String();
+
+    // ---- Datos de maestros ----
+    final maestros = [
+      {
+        'username': 'maestro_ana',
+        'nombres': 'Ana María',
+        'ap_paterno': 'López',
+        'ap_materno': 'García',
+        'correo': 'ana.lopez@escuela.com',
+        'contrasena': '1234',
+      },
+      {
+        'username': 'maestro_carlos',
+        'nombres': 'Carlos',
+        'ap_paterno': 'Hernández',
+        'ap_materno': 'Ruiz',
+        'correo': 'carlos.hernandez@escuela.com',
+        'contrasena': '1234',
+      },
+    ];
+
+    // ---- Datos de padres ----
+    final padres = [
+      {
+        'username': 'padre_maria',
+        'nombres': 'María Fernanda',
+        'ap_paterno': 'Torres',
+        'ap_materno': 'Silva',
+        'correo': 'maria.torres@gmail.com',
+        'contrasena': '1234',
+      },
+      {
+        'username': 'padre_jose',
+        'nombres': 'José Luis',
+        'ap_paterno': 'Ramírez',
+        'ap_materno': 'Castro',
+        'correo': 'jose.ramirez@gmail.com',
+        'contrasena': '1234',
+      },
+      {
+        'username': 'padre_lucia',
+        'nombres': 'Lucía',
+        'ap_paterno': 'Mendoza',
+        'ap_materno': 'Vargas',
+        'correo': 'lucia.mendoza@gmail.com',
+        'contrasena': '1234',
+      },
+    ];
+
+    // ---- Datos de niños ----
+    final ninos = [
+      {
+        'username': 'nino_diego',
+        'nombres': 'Diego',
+        'ap_paterno': 'Torres',
+        'ap_materno': 'Silva',
+        'correo': 'diego.torres@kids.com',
+        'contrasena': '1234',
+      },
+      {
+        'username': 'nino_sofia',
+        'nombres': 'Sofía',
+        'ap_paterno': 'Ramírez',
+        'ap_materno': 'Castro',
+        'correo': 'sofia.ramirez@kids.com',
+        'contrasena': '1234',
+      },
+      {
+        'username': 'nino_mateo',
+        'nombres': 'Mateo',
+        'ap_paterno': 'Mendoza',
+        'ap_materno': 'Vargas',
+        'correo': 'mateo.mendoza@kids.com',
+        'contrasena': '1234',
+      },
+      {
+        'username': 'nino_valentina',
+        'nombres': 'Valentina',
+        'ap_paterno': 'López',
+        'ap_materno': 'García',
+        'correo': 'valentina.lopez@kids.com',
+        'contrasena': '1234',
+      },
+    ];
+
+    // Insertar maestros
+    final maestroIds = <String, int>{};
+    for (final m in maestros) {
+      final existente = await _getUsuarioIdByUsername(db, m['username']!);
+      if (existente != null) {
+        maestroIds[m['username']!] = existente;
+        continue;
+      }
+      final id = await db.insert('usuario', {
+        'rol_id': rolMaestroId,
+        'nombre_usuario': m['username'],
+        'nombres': m['nombres'],
+        'ap_paterno': m['ap_paterno'],
+        'ap_materno': m['ap_materno'],
+        'correo': m['correo'],
+        'contrasena': m['contrasena'],
+        'estado': 'ACTIVO',
+        'avatar_ruta': null,
+        'fecha_creacion': now,
+        'fecha_actualizacion': now,
+      });
+      maestroIds[m['username']!] = id;
+      await db.rawInsert('''
+        INSERT OR IGNORE INTO usuario_estadistica
+          (usuario_id, total_estrellas, total_monedas, eco_nivel, fecha_actualizacion)
+        VALUES (?, 0, 0, 1, ?)
+      ''', [id, now]);
+    }
+
+    // Insertar padres
+    final padreIds = <String, int>{};
+    for (final p in padres) {
+      final existente = await _getUsuarioIdByUsername(db, p['username']!);
+      if (existente != null) {
+        padreIds[p['username']!] = existente;
+        continue;
+      }
+      final id = await db.insert('usuario', {
+        'rol_id': rolPadreId,
+        'nombre_usuario': p['username'],
+        'nombres': p['nombres'],
+        'ap_paterno': p['ap_paterno'],
+        'ap_materno': p['ap_materno'],
+        'correo': p['correo'],
+        'contrasena': p['contrasena'],
+        'estado': 'ACTIVO',
+        'avatar_ruta': null,
+        'fecha_creacion': now,
+        'fecha_actualizacion': now,
+      });
+      padreIds[p['username']!] = id;
+      await db.rawInsert('''
+        INSERT OR IGNORE INTO usuario_estadistica
+          (usuario_id, total_estrellas, total_monedas, eco_nivel, fecha_actualizacion)
+        VALUES (?, 0, 0, 1, ?)
+      ''', [id, now]);
+    }
+
+    // Insertar niños
+    final ninoIds = <String, int>{};
+    for (final n in ninos) {
+      final existente = await _getUsuarioIdByUsername(db, n['username']!);
+      if (existente != null) {
+        ninoIds[n['username']!] = existente;
+        continue;
+      }
+      final id = await db.insert('usuario', {
+        'rol_id': rolNinoId,
+        'nombre_usuario': n['username'],
+        'nombres': n['nombres'],
+        'ap_paterno': n['ap_paterno'],
+        'ap_materno': n['ap_materno'],
+        'correo': n['correo'],
+        'contrasena': n['contrasena'],
+        'estado': 'ACTIVO',
+        'avatar_ruta': null,
+        'fecha_creacion': now,
+        'fecha_actualizacion': now,
+      });
+      ninoIds[n['username']!] = id;
+      await db.rawInsert('''
+        INSERT OR IGNORE INTO usuario_estadistica
+          (usuario_id, total_estrellas, total_monedas, eco_nivel, fecha_actualizacion)
+        VALUES (?, 0, 0, 1, ?)
+      ''', [id, now]);
+      await _seedInventarioInicial(db, id);
+    }
+
+    // ---- VINCULOS TUTOR ↔ ALUMNO ----
+    // padre_maria → nino_diego
+    // padre_jose → nino_sofia
+    // padre_lucia → nino_mateo
+    // maestro_ana → todos (guía)
+    // maestro_carlos → nino_valentina
+    final vinculos = [
+      {'tutor': 'padre_maria', 'alumno': 'nino_diego', 'parentesco': 'Madre'},
+      {'tutor': 'padre_jose', 'alumno': 'nino_sofia', 'parentesco': 'Padre'},
+      {'tutor': 'padre_lucia', 'alumno': 'nino_mateo', 'parentesco': 'Madre'},
+      {'tutor': 'maestro_ana', 'alumno': 'nino_diego', 'parentesco': 'Maestra'},
+      {'tutor': 'maestro_ana', 'alumno': 'nino_sofia', 'parentesco': 'Maestra'},
+      {'tutor': 'maestro_ana', 'alumno': 'nino_mateo', 'parentesco': 'Maestra'},
+      {'tutor': 'maestro_carlos', 'alumno': 'nino_valentina', 'parentesco': 'Maestro'},
+    ];
+
+    for (final v in vinculos) {
+      final tutorId = padreIds[v['tutor']] ?? maestroIds[v['tutor']];
+      final alumnoId = ninoIds[v['alumno']];
+      if (tutorId == null || alumnoId == null) continue;
+      await db.rawInsert('''
+        INSERT OR IGNORE INTO tutor_alumno (tutor_id, alumno_id, parentesco, fecha)
+        VALUES (?, ?, ?, ?)
+      ''', [tutorId, alumnoId, v['parentesco'], now]);
+    }
+
+    // ---- ESTADÍSTICAS DEMO PARA NIÑOS ----
+    final statsNinos = {
+      'nino_diego': {'estrellas': 45, 'monedas': 120, 'eco_nivel': 5},
+      'nino_sofia': {'estrellas': 32, 'monedas': 80, 'eco_nivel': 4},
+      'nino_mateo': {'estrellas': 18, 'monedas': 45, 'eco_nivel': 2},
+      'nino_valentina': {'estrellas': 60, 'monedas': 150, 'eco_nivel': 7},
+    };
+    for (final entry in statsNinos.entries) {
+      final uid = ninoIds[entry.key];
+      if (uid == null) continue;
+      await db.rawUpdate('''
+        UPDATE usuario_estadistica
+        SET total_estrellas = ?, total_monedas = ?, eco_nivel = ?, fecha_actualizacion = ?
+        WHERE usuario_id = ?
+      ''', [
+        entry.value['estrellas'],
+        entry.value['monedas'],
+        entry.value['eco_nivel'],
+        now,
+        uid,
+      ]);
+    }
+
+    // ---- PUNTAJES DE JUEGO DEMO ----
+    const juegos = ['reciclaje', 'memoria', 'clasificacion', 'eco_craft'];
+    final puntajesDemo = <String, List<Map<String, int>>>{
+      'nino_diego': [
+        {'mejor': 850, 'ultimo': 720, 'partidas': 12},
+        {'mejor': 640, 'ultimo': 580, 'partidas': 9},
+        {'mejor': 910, 'ultimo': 890, 'partidas': 15},
+        {'mejor': 300, 'ultimo': 250, 'partidas': 4},
+      ],
+      'nino_sofia': [
+        {'mejor': 700, 'ultimo': 650, 'partidas': 8},
+        {'mejor': 520, 'ultimo': 500, 'partidas': 6},
+        {'mejor': 780, 'ultimo': 750, 'partidas': 10},
+        {'mejor': 180, 'ultimo': 150, 'partidas': 2},
+      ],
+      'nino_mateo': [
+        {'mejor': 400, 'ultimo': 380, 'partidas': 4},
+        {'mejor': 350, 'ultimo': 340, 'partidas': 3},
+        {'mejor': 420, 'ultimo': 400, 'partidas': 5},
+        {'mejor': 90, 'ultimo': 80, 'partidas': 1},
+      ],
+      'nino_valentina': [
+        {'mejor': 980, 'ultimo': 950, 'partidas': 20},
+        {'mejor': 880, 'ultimo': 860, 'partidas': 18},
+        {'mejor': 990, 'ultimo': 970, 'partidas': 22},
+        {'mejor': 450, 'ultimo': 420, 'partidas': 7},
+      ],
+    };
+
+    for (final entry in puntajesDemo.entries) {
+      final uid = ninoIds[entry.key];
+      if (uid == null) continue;
+      for (var i = 0; i < juegos.length; i++) {
+        final data = entry.value[i];
+        await db.rawInsert('''
+          INSERT OR IGNORE INTO puntaje_juego
+            (usuario_id, juego_id, mejor_puntaje, ultimo_puntaje, partidas, fecha_ultima)
+          VALUES (?, ?, ?, ?, ?, ?)
+        ''', [
+          uid, juegos[i], data['mejor'], data['ultimo'], data['partidas'], now,
+        ]);
+      }
+    }
+
+    // ---- INVENTARIO EXTRA DEMO ----
+    final inventarioExtra = {
+      'nino_diego': {'PET': 35, 'Tela': 22, 'Papel': 28, 'Vidrio': 18, 'Orgánico': 30},
+      'nino_sofia': {'PET': 18, 'Tela': 12, 'Papel': 20, 'Vidrio': 10, 'Orgánico': 15},
+      'nino_mateo': {'PET': 8, 'Tela': 6, 'Papel': 10, 'Vidrio': 5, 'Orgánico': 9},
+      'nino_valentina': {'PET': 50, 'Tela': 40, 'Papel': 45, 'Vidrio': 30, 'Orgánico': 48},
+    };
+    for (final entry in inventarioExtra.entries) {
+      final uid = ninoIds[entry.key];
+      if (uid == null) continue;
+      for (final mat in entry.value.entries) {
+        await db.rawUpdate('''
+          UPDATE inventario_materia
+          SET cantidad = ?, fecha_actualizacion = ?
+          WHERE usuario_id = ? AND materia = ?
+        ''', [mat.value, now, uid, mat.key]);
+      }
+    }
+
+    // ---- EVALUACIONES DEMO ----
+    final evaluacionesDemo = [
+      {'nino': 'nino_diego', 'ref': 'eval_basico_1', 'punt': 8, 'total': 10},
+      {'nino': 'nino_diego', 'ref': 'eval_basico_2', 'punt': 9, 'total': 10},
+      {'nino': 'nino_sofia', 'ref': 'eval_basico_1', 'punt': 7, 'total': 10},
+      {'nino': 'nino_mateo', 'ref': 'eval_basico_1', 'punt': 5, 'total': 10},
+      {'nino': 'nino_valentina', 'ref': 'eval_basico_1', 'punt': 10, 'total': 10},
+      {'nino': 'nino_valentina', 'ref': 'eval_basico_2', 'punt': 9, 'total': 10},
+    ];
+    for (final e in evaluacionesDemo) {
+      final uid = ninoIds[e['nino']];
+      if (uid == null) continue;
+      final punt = e['punt'] as int;
+      final total = e['total'] as int;
+      final pct = (punt * 100.0) / total;
+      await db.insert('evaluacion_intento', {
+        'usuario_id': uid,
+        'evaluacion_ref': e['ref'],
+        'puntuacion': punt,
+        'total_preguntas': total,
+        'porcentaje': pct,
+        'fecha': now,
+      });
+    }
+
+    // ---- CONTENIDO VISTO DEMO ----
+    final contenidoDemo = [
+      {'nino': 'nino_diego', 'tipo': 'video', 'ref': 'vid_reciclaje_1'},
+      {'nino': 'nino_diego', 'tipo': 'articulo', 'ref': 'art_planeta'},
+      {'nino': 'nino_sofia', 'tipo': 'video', 'ref': 'vid_reciclaje_1'},
+      {'nino': 'nino_valentina', 'tipo': 'video', 'ref': 'vid_reciclaje_1'},
+      {'nino': 'nino_valentina', 'tipo': 'articulo', 'ref': 'art_planeta'},
+      {'nino': 'nino_valentina', 'tipo': 'juego', 'ref': 'eco_craft'},
+    ];
+    for (final c in contenidoDemo) {
+      final uid = ninoIds[c['nino']];
+      if (uid == null) continue;
+      await db.rawInsert('''
+        INSERT OR IGNORE INTO contenido_visto (usuario_id, tipo, ref_id, fecha)
+        VALUES (?, ?, ?, ?)
+      ''', [uid, c['tipo'], c['ref'], now]);
+    }
+
+    // ---- TICKETS SOPORTE DEMO ----
+    final ticketsDemo = [
+      {
+        'nino': 'nino_diego',
+        'asunto': 'No puedo iniciar el juego de reciclaje',
+        'categoria': 'JUEGO',
+        'descripcion': 'Al presionar el botón de jugar la pantalla se queda en blanco.',
+        'estado': 'ABIERTO',
+      },
+      {
+        'nino': 'nino_sofia',
+        'asunto': 'Duda sobre mi inventario',
+        'categoria': 'INVENTARIO',
+        'descripcion': 'Creo que perdí materiales después de la última actualización.',
+        'estado': 'ABIERTO',
+      },
+      {
+        'nino': 'nino_valentina',
+        'asunto': 'Solicitud de nuevo avatar',
+        'categoria': 'CUENTA',
+        'descripcion': 'Quisiera poder cambiar mi avatar desde el perfil.',
+        'estado': 'CERRADO',
+      },
+    ];
+    for (final t in ticketsDemo) {
+      final uid = ninoIds[t['nino']];
+      if (uid == null) continue;
+      await db.insert('ticket_soporte', {
+        'usuario_id': uid,
+        'asunto': t['asunto'],
+        'categoria': t['categoria'],
+        'descripcion': t['descripcion'],
+        'estado': t['estado'],
+        'fecha_creacion': now,
+        'fecha_cierre': t['estado'] == 'CERRADO' ? now : null,
+      });
+    }
+
+    // ---- PROGRESO Y FAVORITOS DEMO ----
+    final progresoDemo = [
+      {'nino': 'nino_diego', 'paso': 1},
+      {'nino': 'nino_diego', 'paso': 2},
+      {'nino': 'nino_diego', 'paso': 3},
+      {'nino': 'nino_sofia', 'paso': 1},
+      {'nino': 'nino_sofia', 'paso': 2},
+      {'nino': 'nino_valentina', 'paso': 1},
+      {'nino': 'nino_valentina', 'paso': 2},
+      {'nino': 'nino_valentina', 'paso': 3},
+      {'nino': 'nino_valentina', 'paso': 4},
+    ];
+    for (final p in progresoDemo) {
+      final uid = ninoIds[p['nino']];
+      if (uid == null) continue;
+      await db.rawInsert('''
+        INSERT OR IGNORE INTO progreso_usuario (usuario_id, paso_id, completado, fecha)
+        VALUES (?, ?, 1, ?)
+      ''', [uid, p['paso'], now]);
+    }
+
+    final favoritosDemo = [
+      {'nino': 'nino_diego', 'paso': 1},
+      {'nino': 'nino_diego', 'paso': 3},
+      {'nino': 'nino_sofia', 'paso': 2},
+      {'nino': 'nino_valentina', 'paso': 1},
+      {'nino': 'nino_valentina', 'paso': 4},
+    ];
+    for (final f in favoritosDemo) {
+      final uid = ninoIds[f['nino']];
+      if (uid == null) continue;
+      await db.rawInsert('''
+        INSERT OR IGNORE INTO favorito (usuario_id, paso_id, fecha)
+        VALUES (?, ?, ?)
+      ''', [uid, f['paso'], now]);
+    }
+
+    // ignore: avoid_print
+    print('✅ Seeder demo: MAESTROS, PADRES y NIÑOS insertados con datos de prueba.');
   }
 
   // ==========================================

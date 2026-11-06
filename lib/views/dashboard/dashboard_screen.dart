@@ -35,12 +35,16 @@ class DashboardScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final dashboardVM = Provider.of<DashboardViewModel>(context);
 
-    final List<Widget> pages = const [
-      JuegosScreen(),
-      EvaluacionesScreen(),
-      InicioScreen(),
-      SoporteScreen(),
-      EcoEncartaScreen(),
+    // ✅ Ya NO es const: inyectamos usuario + dashboardVM a InicioScreen
+    final List<Widget> pages = [
+      const JuegosScreen(),
+      const EvaluacionesScreen(),
+      InicioScreen(
+        usuario: usuario,
+        dashboardVM: dashboardVM,
+      ),
+      const SoporteScreen(),
+      const EcoEncartaScreen(),
     ];
 
     return Scaffold(
