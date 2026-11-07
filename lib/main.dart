@@ -76,9 +76,43 @@ class Root extends StatefulWidget {
 
 class _RootState extends State<Root> {
   bool _loggedIn = false;
+  bool _restoring = true; // ⏳ mientras intentamos restaurar sesión
 
   /// 🧑 Usuario autenticado
   UsuarioActual? _usuario;
+
+  @override
+  void initState() {
+    super.initState();
+    _restaurarSesion();
+  }
+
+  // ==========================================
+  // 🔁 RESTAURAR SESIÓN AL ARRANCAR
+  // ==========================================
+  Future<void> _restaurarSesion() async {
+    final loginVM = context.read<LoginViewModel>();
+    final restored = await loginVM.restaurarSesion();
+
+    if (!mounted) return;
+
+    if (restored && loginVM.usuarioActual != null) {
+      final dashboardVM = context.read<DashboardViewModel>();
+      dashboardVM.restart();
+
+      setState(() {
+        _usuario = loginVM.usuarioActual;
+        _loggedIn = true;
+        _restoring = false;
+      });
+    } else {
+      setState(() {
+        _usuario = null;
+        _loggedIn = false;
+        _restoring = false;
+      });
+    }
+  }
 
   // ==========================================
   // ✅ LOGIN OK
@@ -98,7 +132,7 @@ class _RootState extends State<Root> {
   // ==========================================
   void _handleLogout() {
     final loginVM = context.read<LoginViewModel>();
-    loginVM.logout();
+    loginVM.logout(); // ya borra SharedPreferences también
 
     setState(() {
       _usuario = null;
@@ -108,6 +142,15 @@ class _RootState extends State<Root> {
 
   @override
   Widget build(BuildContext context) {
+    // ⏳ Splash mientras restauramos
+    if (_restoring) {
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(color: AppColors.primary),
+        ),
+      );
+    }
+
     return _loggedIn
         ? dash.DashboardScreen(
             usuario: _usuario,

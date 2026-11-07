@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../data/database_helper.dart';
 
 /// =======================================
@@ -66,6 +68,15 @@ class UsuarioActual {
         'estado': estado,
         'avatar_ruta': avatarRuta,
       };
+
+  // =====================================
+  // 💾 SERIALIZACIÓN PARA PERSISTENCIA
+  // =====================================
+  Map<String, Object?> toJson() => toMap();
+
+  factory UsuarioActual.fromJson(Map<String, dynamic> json) {
+    return UsuarioActual.fromMap(Map<String, Object?>.from(json));
+  }
 }
 
 /// =======================================
@@ -86,6 +97,9 @@ class LoginViewModel extends ChangeNotifier {
 
   /// Para mostrar si hay usuario logueado
   bool get isLoggedIn => _usuarioActual != null;
+
+  // 🔑 Clave de SharedPreferences
+  static const _kUserKey = 'sesion_usuario';
 
   /// 🔄 LIMPIAR ERRORES
   void clearError() {
@@ -130,6 +144,10 @@ class LoginViewModel extends ChangeNotifier {
       }
 
       _usuarioActual = UsuarioActual.fromMap(row);
+
+      // 💾 PERSISTIR SESIÓN
+      await _guardarSesion(_usuarioActual!);
+
       _errorMessage = null;
       _isLoading = false;
       notifyListeners();
@@ -143,12 +161,49 @@ class LoginViewModel extends ChangeNotifier {
     }
   }
 
+  /// =======================================
+  /// 💾 GUARDAR SESIÓN EN DISCO
+  /// =======================================
+  Future<void> _guardarSesion(UsuarioActual user) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kUserKey, jsonEncode(user.toJson()));
+  }
+
+  /// =======================================
+  /// 🔁 RESTAURAR SESIÓN AL ARRANCAR LA APP
+  /// Devuelve true si había una sesión válida guardada.
+  /// =======================================
+  Future<bool> restaurarSesion() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_kUserKey);
+      if (raw == null) return false;
+
+      final json = jsonDecode(raw) as Map<String, dynamic>;
+      _usuarioActual = UsuarioActual.fromJson(json);
+      notifyListeners();
+      return true;
+    } catch (_) {
+      // Datos corruptos → limpiamos y forzamos login
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_kUserKey);
+      _usuarioActual = null;
+      notifyListeners();
+      return false;
+    }
+  }
+
   /// 🚪 LOGOUT
   Future<void> logout() async {
     _usuarioActual = null;
     emailController.clear();
     passwordController.clear();
     _errorMessage = null;
+
+    // 🗑️ Borrar sesión persistida
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kUserKey);
+
     notifyListeners();
   }
 
