@@ -1,21 +1,103 @@
 import 'package:flutter/material.dart';
 
+enum DashboardModule {
+  inicio,
+  juegos,
+  evaluaciones,
+  multimedia,
+  soporte,
+  gestionUsuarios,
+  registroEvaluaciones,
+  controlParental,
+  reportesAdmin,
+  configuracion,
+}
+
 class DashboardViewModel extends ChangeNotifier {
-  int _selectedIndex = 0;
+  DashboardModule _selected = DashboardModule.inicio;
+  String? _rolActual;
 
-  int get selectedIndex => _selectedIndex;
+  DashboardModule get selected => _selected;
+  String? get rolActual => _rolActual;
 
-  void changeIndex(int index) {
-    if (_selectedIndex == index) return;
-    _selectedIndex = index;
+  /// Compatibilidad con código viejo: devuelve el índice del módulo actual
+  /// dentro de la lista de módulos visibles para el rol.
+  int get selectedIndex {
+    final visibles = modulosVisibles;
+    final idx = visibles.indexOf(_selected);
+    return idx < 0 ? 0 : idx;
+  }
+
+  /// Módulos permitidos según el rol.
+  List<DashboardModule> get modulosVisibles {
+    switch ((_rolActual ?? '').toUpperCase()) {
+      case 'ADMIN':
+        return const [
+          DashboardModule.inicio,
+          DashboardModule.juegos,
+          DashboardModule.evaluaciones,
+          DashboardModule.multimedia,
+          DashboardModule.soporte,
+          DashboardModule.gestionUsuarios,
+          DashboardModule.registroEvaluaciones,
+          DashboardModule.reportesAdmin,
+          DashboardModule.configuracion,
+        ];
+      case 'MAESTRO':
+        return const [
+          DashboardModule.inicio,
+          DashboardModule.juegos,
+          DashboardModule.evaluaciones,
+          DashboardModule.multimedia,
+          DashboardModule.soporte,
+          DashboardModule.gestionUsuarios,
+          DashboardModule.registroEvaluaciones,
+        ];
+      case 'PADRE':
+        return const [
+          DashboardModule.inicio,
+          DashboardModule.juegos,
+          DashboardModule.evaluaciones,
+          DashboardModule.multimedia,
+          DashboardModule.soporte,
+          DashboardModule.registroEvaluaciones,
+          DashboardModule.controlParental,
+        ];
+      case 'NIÑO':
+      default:
+        return const [
+          DashboardModule.inicio,
+          DashboardModule.juegos,
+          DashboardModule.evaluaciones,
+          DashboardModule.multimedia,
+          DashboardModule.soporte,
+        ];
+    }
+  }
+
+  /// Llamar al iniciar sesión / montar el dashboard.
+  void configurarPorRol(String? rol) {
+    _rolActual = rol;
+    _selected = DashboardModule.inicio;
     notifyListeners();
   }
 
-  /// 🔄 Reinicia el dashboard al estado inicial.
-  /// Se llama justo después del login para que el nuevo usuario
-  /// siempre aterrice en la pantalla de inicio (índice 0).
+  void changeModule(DashboardModule module) {
+    if (!modulosVisibles.contains(module)) return;
+    if (_selected == module) return;
+    _selected = module;
+    notifyListeners();
+  }
+
+  /// Compatibilidad con código viejo que llamaba `changeIndex(int)`.
+  void changeIndex(int index) {
+    final visibles = modulosVisibles;
+    if (index < 0 || index >= visibles.length) return;
+    changeModule(visibles[index]);
+  }
+
   void restart() {
-    _selectedIndex = 0;
+    _selected = DashboardModule.inicio;
     notifyListeners();
   }
 }
