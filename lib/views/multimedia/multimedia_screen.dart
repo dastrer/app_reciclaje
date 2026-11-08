@@ -4,8 +4,11 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
+import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../data/database_helper.dart';
+import '../../viewmodels/login_viewmodel.dart';
 import '../../utils/constants.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -51,6 +54,7 @@ class _Responsive {
 //  MODELOS
 // ═══════════════════════════════════════════════════════════════════════════
 class EcoMaterial {
+  final String id; // 🔑 NUEVO: id estable para persistir
   final String name;
   final String emoji;
   final Color color;
@@ -61,6 +65,7 @@ class EcoMaterial {
   final IconData icon;
 
   const EcoMaterial({
+    required this.id,
     required this.name,
     required this.emoji,
     required this.color,
@@ -90,16 +95,17 @@ class TimelineEntry {
   });
 }
 
-/// Tarjeta de descubrimiento: abre una URL externa (video, audio, artículo...)
 class DiscoveryItem {
+  final String id; // 🔑 NUEVO: id estable
   final String title;
   final String subtitle;
   final String thumbnailUrl;
-  final String externalUrl; // 👈 tú enlazas aquí tus videos/audios reales
+  final String externalUrl;
   final Color color;
   final DiscoveryKind kind;
 
   const DiscoveryItem({
+    required this.id,
     required this.title,
     required this.subtitle,
     required this.thumbnailUrl,
@@ -132,6 +138,7 @@ class GlossaryTerm {
 // ═══════════════════════════════════════════════════════════════════════════
 const _materials = <EcoMaterial>[
   EcoMaterial(
+    id: 'material_plastico',
     name: 'Plástico',
     emoji: '🧴',
     color: EcoPalette.skyBlue,
@@ -145,6 +152,7 @@ const _materials = <EcoMaterial>[
     decompositionScore: 0.95,
   ),
   EcoMaterial(
+    id: 'material_papel',
     name: 'Papel y Cartón',
     emoji: '📦',
     color: EcoPalette.sunnyYellow,
@@ -158,6 +166,7 @@ const _materials = <EcoMaterial>[
     decompositionScore: 0.2,
   ),
   EcoMaterial(
+    id: 'material_vidrio',
     name: 'Vidrio',
     emoji: '🍾',
     color: EcoPalette.grassGreen,
@@ -171,6 +180,7 @@ const _materials = <EcoMaterial>[
     decompositionScore: 1.0,
   ),
   EcoMaterial(
+    id: 'material_organicos',
     name: 'Orgánicos',
     emoji: '🍌',
     color: EcoPalette.earthBrown,
@@ -184,6 +194,7 @@ const _materials = <EcoMaterial>[
     decompositionScore: 0.05,
   ),
   EcoMaterial(
+    id: 'material_electronicos',
     name: 'Electrónicos',
     emoji: '🔋',
     color: EcoPalette.warmOrange,
@@ -255,55 +266,50 @@ const _timelineEntries = <TimelineEntry>[
   ),
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  DESCUBRIMIENTO — 4 videos de YouTube (tú pegas los links reales)
-// ═══════════════════════════════════════════════════════════════════════════
 const _discoveryItems = <DiscoveryItem>[
   DiscoveryItem(
+    id: 'disc_planta_reciclaje',
     title: '¿Cómo funciona una planta de reciclaje?',
     subtitle: 'Video educativo · YouTube',
     thumbnailUrl:
         'https://images.unsplash.com/photo-1532996122724-e3c354a0b15b?w=600',
-    // 👇 PEGA AQUÍ EL LINK DEL VIDEO 1
-    externalUrl: 'https://www.youtube.com/watch?v=Enlmw0NL67c&list=PLTywNBit0lFA1ygWHgnlIyBHATeHYdYB8',
+    externalUrl:
+        'https://www.youtube.com/watch?v=Enlmw0NL67c&list=PLTywNBit0lFA1ygWHgnlIyBHATeHYdYB8',
     color: EcoPalette.grassGreen,
     kind: DiscoveryKind.video,
   ),
   DiscoveryItem(
+    id: 'disc_viaje_botella',
     title: 'El viaje de una botella de plástico',
     subtitle: 'Video animado · YouTube',
     thumbnailUrl:
         'https://images.unsplash.com/photo-1605600659908-0ef719419d41?w=600',
-    // 👇 PEGA AQUÍ EL LINK DEL VIDEO 2
     externalUrl: 'https://www.youtube.com/watch?v=17v70o0QkbM',
     color: EcoPalette.skyBlue,
     kind: DiscoveryKind.video,
   ),
   DiscoveryItem(
+    id: 'disc_botella_camiseta',
     title: 'De botella a camiseta',
     subtitle: 'Cápsula educativa · YouTube',
     thumbnailUrl:
         'https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=600',
-    // 👇 PEGA AQUÍ EL LINK DEL VIDEO 3
     externalUrl: 'https://www.youtube.com/watch?v=qvw5Fm1KCeo',
     color: EcoPalette.warmOrange,
     kind: DiscoveryKind.video,
   ),
   DiscoveryItem(
+    id: 'disc_compost',
     title: 'Del orgánico al compost',
     subtitle: 'Cápsula educativa · YouTube',
     thumbnailUrl:
         'https://images.unsplash.com/photo-1416879595882-3373a0480b5b?w=600',
-    // 👇 PEGA AQUÍ EL LINK DEL VIDEO 4
     externalUrl: 'https://www.youtube.com/watch?v=cIOkj7sMrPo',
     color: EcoPalette.earthBrown,
     kind: DiscoveryKind.video,
   ),
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  GLOSARIO AMPLIADO (12 términos)
-// ═══════════════════════════════════════════════════════════════════════════
 const _glossaryTerms = <GlossaryTerm>[
   GlossaryTerm(
     term: 'Compostaje',
@@ -446,6 +452,130 @@ const _glossaryTerms = <GlossaryTerm>[
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
+//  PROVIDER DE MULTIMEDIA (PROGRESO EN BD)
+// ═══════════════════════════════════════════════════════════════════════════
+class MultimediaProgressProvider extends ChangeNotifier {
+  final DatabaseHelper _db = DatabaseHelper.instance;
+  final int usuarioId;
+
+  MultimediaProgressProvider({required this.usuarioId});
+
+  bool _cargando = true;
+  bool _darRecompensaPorNuevoContenido = true; // 🔧 configurable
+
+  Set<String> _vistos = {}; // formato: "<tipo>::<ref_id>"
+
+  int _estrellasUsuario = 0;
+
+  bool get cargando => _cargando;
+  int get estrellasUsuario => _estrellasUsuario;
+
+  /// Total de items marcables: 5 materiales + 4 videos + 1 glosario = 10.
+  int get totalItems => _materials.length + _discoveryItems.length + 1;
+
+  int get vistosCount {
+    // Contamos solo los que están dentro de los tipos que manejamos.
+    final tiposValidos = {
+      'multimedia_material',
+      'multimedia_video',
+      'multimedia_glosario',
+    };
+    return _vistos.where((k) {
+      final tipo = k.split('::').first;
+      return tiposValidos.contains(tipo);
+    }).length;
+  }
+
+  double get progreso {
+    if (totalItems == 0) return 0;
+    return (vistosCount / totalItems).clamp(0.0, 1.0);
+  }
+
+  bool esMaterialVisto(String materialId) =>
+      _vistos.contains('multimedia_material::$materialId');
+
+  bool esVideoVisto(String videoId) =>
+      _vistos.contains('multimedia_video::$videoId');
+
+  bool get glosarioVisto =>
+      _vistos.contains('multimedia_glosario::tab_visto');
+
+  // ─────────────────────────────────────
+  // CARGA INICIAL
+  // ─────────────────────────────────────
+  Future<void> cargarDesdeBD() async {
+    _cargando = true;
+    notifyListeners();
+    try {
+      final rows = await _db.rawQuery(
+        "SELECT tipo, ref_id FROM contenido_visto WHERE usuario_id = ?",
+        [usuarioId],
+      );
+      _vistos = rows.map((r) {
+        final tipo = (r['tipo'] as String?) ?? '';
+        final ref = (r['ref_id'] as String?) ?? '';
+        return '$tipo::$ref';
+      }).toSet();
+
+      final stats = await _db.obtenerEstadistica(usuarioId);
+      _estrellasUsuario =
+          (stats?['total_estrellas'] as num?)?.toInt() ?? 0;
+    } catch (_) {
+      _vistos = {};
+    } finally {
+      _cargando = false;
+      notifyListeners();
+    }
+  }
+
+  // ─────────────────────────────────────
+  // MARCAR
+  // ─────────────────────────────────────
+  Future<bool> marcarMaterialVisto(String materialId) =>
+      _marcar('multimedia_material', materialId);
+
+  Future<bool> marcarVideoVisto(String videoId) =>
+      _marcar('multimedia_video', videoId);
+
+  Future<bool> marcarGlosarioVisto() =>
+      _marcar('multimedia_glosario', 'tab_visto');
+
+  Future<bool> _marcar(String tipo, String refId) async {
+    final key = '$tipo::$refId';
+    if (_vistos.contains(key)) return false;
+
+    // Optimista
+    _vistos.add(key);
+    final subioNivel = false; // placeholder
+    notifyListeners();
+
+    try {
+      await _db.marcarContenidoVisto(
+        usuarioId: usuarioId,
+        tipo: tipo,
+        refId: refId,
+      );
+
+      // 🎁 Recompensa de 1 estrella al marcar por primera vez.
+      if (_darRecompensaPorNuevoContenido) {
+        try {
+          final res = await _db.sumarEstrellas(usuarioId, 1);
+          _estrellasUsuario =
+              (res['estrellas'] as int?) ?? _estrellasUsuario + 1;
+          notifyListeners();
+        } catch (_) {}
+      }
+      return true;
+    } catch (_) {
+      // Rollback
+      _vistos.remove(key);
+      notifyListeners();
+      return false;
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 //  PANTALLA PRINCIPAL
 // ═══════════════════════════════════════════════════════════════════════════
 class EcoEncartaScreen extends StatefulWidget {
@@ -463,83 +593,205 @@ class _EcoEncartaScreenState extends State<EcoEncartaScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
+    _tabController.addListener(_onTabChange);
   }
 
   @override
   void dispose() {
+    _tabController.removeListener(_onTabChange);
     _tabController.dispose();
     super.dispose();
   }
 
+  void _onTabChange() {
+    // Si el usuario entra al tab del glosario, lo marcamos como visto.
+    if (_tabController.indexIsChanging) return;
+    if (_tabController.index == 3) {
+      final provider = context.read<MultimediaProgressProvider>();
+      provider.marcarGlosarioVisto();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: EcoPalette.bgCream,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _buildHeader(context),
-            _buildTabBar(context),
-            Expanded(
-              child: TabBarView(
-                controller: _tabController,
-                physics: const BouncingScrollPhysics(),
-                children: const [
-                  _EcoSearcherTab(),
-                  _TimelineTab(),
-                  _DiscoveryCornerTab(),
-                  _GlossaryTab(),
+    final usuario = context.watch<LoginViewModel>().usuarioActual;
+
+    if (usuario == null) {
+      return const Center(child: Text('Usuario no autenticado'));
+    }
+
+    return ChangeNotifierProvider<MultimediaProgressProvider>(
+      create: (_) =>
+          MultimediaProgressProvider(usuarioId: usuario.id)..cargarDesdeBD(),
+      child: Builder(
+        builder: (context) {
+          final provider = context.watch<MultimediaProgressProvider>();
+          return Scaffold(
+            backgroundColor: EcoPalette.bgCream,
+            body: SafeArea(
+              child: Column(
+                children: [
+                  if (provider.cargando)
+                    const LinearProgressIndicator(minHeight: 2),
+                  _buildHeader(context, provider),
+                  _buildTabBar(context),
+                  Expanded(
+                    child: TabBarView(
+                      controller: _tabController,
+                      physics: const BouncingScrollPhysics(),
+                      children: const [
+                        _EcoSearcherTab(),
+                        _TimelineTab(),
+                        _DiscoveryCornerTab(),
+                        _GlossaryTab(),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
 
-  Widget _buildHeader(BuildContext context) {
+  Widget _buildHeader(
+    BuildContext context,
+    MultimediaProgressProvider provider,
+  ) {
     final isSmall = _Responsive.isSmallPhone(context);
     final pad = _Responsive.hPad(context);
+
     return Padding(
       padding: EdgeInsets.fromLTRB(pad, AppSpacing.small, pad, 4),
-      child: Row(
+      child: Column(
         children: [
-          Container(
-            padding: EdgeInsets.all(isSmall ? 8 : 10),
-            decoration: BoxDecoration(
-              color: EcoPalette.grassGreen.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Icon(
-              Icons.eco_rounded,
-              color: EcoPalette.grassGreen,
-              size: isSmall ? 22 : 28,
-            ),
-          ),
-          SizedBox(width: isSmall ? 8 : 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'EcoEncarta',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTextStyles.heading1.copyWith(
-                    color: EcoPalette.grassGreen,
-                    fontSize: isSmall ? 20 : 24,
-                    fontWeight: FontWeight.w800,
+          Row(
+            children: [
+              Container(
+                padding: EdgeInsets.all(isSmall ? 8 : 10),
+                decoration: BoxDecoration(
+                  color: EcoPalette.grassGreen.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Icon(
+                  Icons.eco_rounded,
+                  color: EcoPalette.grassGreen,
+                  size: isSmall ? 22 : 28,
+                ),
+              ),
+              SizedBox(width: isSmall ? 8 : 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'EcoEncarta',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTextStyles.heading1.copyWith(
+                        color: EcoPalette.grassGreen,
+                        fontSize: isSmall ? 20 : 24,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    Text(
+                      '¡Aprende reciclando!',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTextStyles.body.copyWith(
+                        color: AppColors.textSecondary,
+                        fontSize: isSmall ? 11 : 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // Estrellas del usuario
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF8E1),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: const Color(0xFFFFD54F),
+                    width: 1.4,
                   ),
                 ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.star_rounded,
+                        color: Color(0xFFFFB300), size: 16),
+                    const SizedBox(width: 4),
+                    Text(
+                      '${provider.estrellasUsuario}',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: isSmall ? 11 : 13,
+                        color: const Color(0xFF6D4C41),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // Barra de progreso
+          Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: EcoPalette.grassGreen.withOpacity(0.25),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.explore_rounded,
+                    size: 18, color: EcoPalette.grassGreen),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Progreso: ${provider.vistosCount}/${provider.totalItems}',
+                        style: TextStyle(
+                          fontSize: isSmall ? 11 : 12,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: LinearProgressIndicator(
+                          value: provider.progreso,
+                          minHeight: 6,
+                          backgroundColor:
+                              EcoPalette.grassGreen.withOpacity(0.15),
+                          valueColor: const AlwaysStoppedAnimation(
+                              EcoPalette.grassGreen),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
                 Text(
-                  '¡Aprende reciclando!',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTextStyles.body.copyWith(
-                    color: AppColors.textSecondary,
-                    fontSize: isSmall ? 11 : 13,
+                  '${(provider.progreso * 100).toInt()}%',
+                  style: TextStyle(
+                    fontSize: isSmall ? 11 : 12,
+                    fontWeight: FontWeight.bold,
+                    color: EcoPalette.grassGreen,
                   ),
                 ),
               ],
@@ -668,8 +920,11 @@ class _EcoCardWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isSmall = _Responsive.isSmallPhone(context);
+    final provider = context.watch<MultimediaProgressProvider>();
+    final visto = provider.esMaterialVisto(material.id);
+
     return GestureDetector(
-      onTap: () => _showMaterialDetail(context, material),
+      onTap: () => _abrirDetalle(context),
       child: Container(
         decoration: BoxDecoration(
           color: Colors.white,
@@ -735,6 +990,35 @@ class _EcoCardWidget extends StatelessWidget {
                         ),
                       ),
                     ),
+                    if (visto)
+                      Positioned(
+                        top: 6,
+                        left: 6,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: EcoPalette.grassGreen,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.check_circle,
+                                  size: 11, color: Colors.white),
+                              SizedBox(width: 3),
+                              Text(
+                                'VISTO',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 9,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -789,12 +1073,11 @@ class _EcoCardWidget extends StatelessWidget {
                               borderRadius: BorderRadius.circular(10),
                             ),
                           ),
-                          onPressed: () =>
-                              _showMaterialDetail(context, material),
+                          onPressed: () => _abrirDetalle(context),
                           child: FittedBox(
                             fit: BoxFit.scaleDown,
                             child: Text(
-                              'Explorar',
+                              visto ? 'Ver de nuevo' : 'Explorar',
                               style: TextStyle(
                                 fontSize: isSmall ? 11 : 12,
                                 fontWeight: FontWeight.w700,
@@ -814,7 +1097,11 @@ class _EcoCardWidget extends StatelessWidget {
     );
   }
 
-  void _showMaterialDetail(BuildContext context, EcoMaterial material) {
+  Future<void> _abrirDetalle(BuildContext context) async {
+    final provider = context.read<MultimediaProgressProvider>();
+    // Marcar visto al abrir (idempotente)
+    await provider.marcarMaterialVisto(material.id);
+    if (!context.mounted) return;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1448,7 +1735,7 @@ class _TimelineCardVertical extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  TAB 3 — DESCUBRIMIENTO (4 videos de YouTube con url_launcher)
+//  TAB 3 — DESCUBRIMIENTO
 // ═══════════════════════════════════════════════════════════════════════════
 class _DiscoveryCornerTab extends StatelessWidget {
   const _DiscoveryCornerTab();
@@ -1489,15 +1776,20 @@ class _DiscoveryCardWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     final isSmall = _Responsive.isSmallPhone(context);
     final thumbSize = isSmall ? 88.0 : 104.0;
+    final provider = context.watch<MultimediaProgressProvider>();
+    final visto = provider.esVideoVisto(item.id);
 
     return GestureDetector(
       onTap: () => _launchExternal(context),
       child: Container(
-        // 👇 altura fija: evita el "hasSize is not true"
         height: thumbSize,
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(18),
+          border: visto
+              ? Border.all(
+                  color: EcoPalette.grassGreen.withOpacity(0.5), width: 2)
+              : null,
           boxShadow: [
             BoxShadow(
               color: item.color.withOpacity(0.15),
@@ -1507,10 +1799,8 @@ class _DiscoveryCardWidget extends StatelessWidget {
           ],
         ),
         child: Row(
-          // 👇 ya no usamos stretch; la altura la da el Container
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            // Miniatura + overlay con icono según tipo
             ClipRRect(
               borderRadius: const BorderRadius.horizontal(
                 left: Radius.circular(18),
@@ -1540,6 +1830,21 @@ class _DiscoveryCardWidget extends StatelessWidget {
                         size: isSmall ? 32 : 40,
                       ),
                     ),
+                    if (visto)
+                      Positioned(
+                        top: 6,
+                        left: 6,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: EcoPalette.grassGreen,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(Icons.check,
+                              size: 12, color: Colors.white),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -1635,12 +1940,15 @@ class _DiscoveryCardWidget extends StatelessWidget {
   }
 
   Future<void> _launchExternal(BuildContext context) async {
+    final provider = context.read<MultimediaProgressProvider>();
+    // Marca como visto antes de abrir
+    await provider.marcarVideoVisto(item.id);
+
     final uri = Uri.tryParse(item.externalUrl);
     if (uri == null) {
       _toast(context, 'Enlace inválido.');
       return;
     }
-    // 👇 Si el link sigue siendo el placeholder, avisa en vez de fallar
     if (item.externalUrl.contains('XXXXXXXXXXX')) {
       _toast(context, 'Aún no hay link asignado para este video.');
       return;
@@ -1668,7 +1976,7 @@ class _DiscoveryCardWidget extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  TAB 4 — GLOSARIO AMPLIADO
+//  TAB 4 — GLOSARIO
 // ═══════════════════════════════════════════════════════════════════════════
 class _GlossaryTab extends StatelessWidget {
   const _GlossaryTab();
@@ -1718,7 +2026,14 @@ class _GlossaryCardState extends State<_GlossaryCard> {
     final isSmall = _Responsive.isSmallPhone(context);
 
     return GestureDetector(
-      onTap: () => setState(() => _expanded = !_expanded),
+      onTap: () {
+        setState(() => _expanded = !_expanded);
+        if (_expanded) {
+          // Al abrir un término, marcamos el glosario como visto
+          // (idempotente; solo pega la primera vez).
+          context.read<MultimediaProgressProvider>().marcarGlosarioVisto();
+        }
+      },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeInOut,
@@ -1727,7 +2042,8 @@ class _GlossaryCardState extends State<_GlossaryCard> {
           color: Colors.white,
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color: _expanded ? term.color.withOpacity(0.5) : Colors.transparent,
+            color:
+                _expanded ? term.color.withOpacity(0.5) : Colors.transparent,
             width: 2,
           ),
           boxShadow: [

@@ -24,8 +24,11 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
   List<_UsuarioItem> _usuarios = [];
   List<_UsuarioItem> _filtrados = [];
 
-  String _filtroRol = 'TODOS'; // nombre rol o 'TODOS'
-  String _filtroEstado = 'TODOS'; // 'TODOS' | 'ACTIVO' | 'RESTRINGIDO'
+  /// Conteo de vínculos por usuario (tutor o alumno).
+  final Map<int, int> _conteoVinculos = {};
+
+  String _filtroRol = 'TODOS';
+  String _filtroEstado = 'TODOS';
 
   @override
   void initState() {
@@ -44,18 +47,24 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
   // 📥 CARGA
   // ─────────────────────────────────────────
   Future<void> _cargarTodo() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
       final roles = await _cargarRoles();
       final usuarios = await _cargarUsuarios();
+      final conteos = await _cargarConteoVinculos();
       if (!mounted) return;
       setState(() {
         _roles = roles;
         _usuarios = usuarios;
         _filtrados = usuarios;
+        _conteoVinculos
+          ..clear()
+          ..addAll(conteos);
         _loading = false;
       });
       _aplicarFiltros();
@@ -69,61 +78,93 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
   }
 
   Future<List<_RolItem>> _cargarRoles() async {
-    final rows = await _db.rawQuery(
-      'SELECT id, nombre, descripcion FROM rol ORDER BY id ASC',
-    );
-    return rows
-        .map((r) => _RolItem(
-              id: r['id'] as int,
-              nombre: (r['nombre'] as String?) ?? '',
-              descripcion: (r['descripcion'] as String?) ?? '',
-            ))
-        .toList();
+    try {
+      final rows = await _db.rawQuery(
+        'SELECT id, nombre, descripcion FROM rol ORDER BY id ASC',
+      );
+      return rows
+          .map((r) => _RolItem(
+                id: r['id'] as int,
+                nombre: (r['nombre'] as String?) ?? '',
+                descripcion: (r['descripcion'] as String?) ?? '',
+              ))
+          .toList();
+    } catch (_) {
+      return [];
+    }
   }
 
   Future<List<_UsuarioItem>> _cargarUsuarios() async {
-    final rows = await _db.rawQuery('''
-      SELECT
-        u.id,
-        u.rol_id,
-        r.nombre      AS rol_nombre,
-        u.nombre_usuario,
-        u.nombres,
-        u.ap_paterno,
-        u.ap_materno,
-        u.correo,
-        u.estado,
-        u.avatar_ruta,
-        u.fecha_creacion
-      FROM usuario u
-      JOIN rol r ON r.id = u.rol_id
-      ORDER BY u.id ASC
-    ''');
+    try {
+      final rows = await _db.rawQuery('''
+        SELECT
+          u.id,
+          u.rol_id,
+          r.nombre      AS rol_nombre,
+          u.nombre_usuario,
+          u.nombres,
+          u.ap_paterno,
+          u.ap_materno,
+          u.correo,
+          u.estado,
+          u.avatar_ruta,
+          u.fecha_creacion
+        FROM usuario u
+        JOIN rol r ON r.id = u.rol_id
+        ORDER BY u.id ASC
+      ''');
 
-    return rows.map((r) {
-      final nombres = (r['nombres'] as String?) ?? '';
-      final apPat = (r['ap_paterno'] as String?) ?? '';
-      final apMat = (r['ap_materno'] as String?) ?? '';
-      final full = '$nombres $apPat $apMat'.trim();
+      return rows.map((r) {
+        final nombres = (r['nombres'] as String?) ?? '';
+        final apPat = (r['ap_paterno'] as String?) ?? '';
+        final apMat = (r['ap_materno'] as String?) ?? '';
+        final full = '$nombres $apPat $apMat'.trim();
 
-      return _UsuarioItem(
-        id: r['id'] as int,
-        rolId: r['rol_id'] as int,
-        rolNombre: (r['rol_nombre'] as String?) ?? '',
-        nombreUsuario: (r['nombre_usuario'] as String?) ?? '',
-        nombreCompleto: full,
-        correo: (r['correo'] as String?) ?? '',
-        estado: (r['estado'] as String?) ?? 'ACTIVO',
-        avatarRuta: r['avatar_ruta'] as String?,
-        fechaCreacion: (r['fecha_creacion'] as String?) ?? '',
-      );
-    }).toList();
+        return _UsuarioItem(
+          id: r['id'] as int,
+          rolId: r['rol_id'] as int,
+          rolNombre: (r['rol_nombre'] as String?) ?? '',
+          nombreUsuario: (r['nombre_usuario'] as String?) ?? '',
+          nombreCompleto: full,
+          correo: (r['correo'] as String?) ?? '',
+          estado: (r['estado'] as String?) ?? 'ACTIVO',
+          avatarRuta: r['avatar_ruta'] as String?,
+          fechaCreacion: (r['fecha_creacion'] as String?) ?? '',
+        );
+      }).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<Map<int, int>> _cargarConteoVinculos() async {
+    try {
+      final rows = await _db.rawQuery('''
+        SELECT usuario_id, SUM(c) AS total FROM (
+          SELECT tutor_id AS usuario_id, COUNT(*) AS c
+            FROM tutor_alumno GROUP BY tutor_id
+          UNION ALL
+          SELECT alumno_id AS usuario_id, COUNT(*) AS c
+            FROM tutor_alumno GROUP BY alumno_id
+        ) GROUP BY usuario_id
+      ''');
+      final map = <int, int>{};
+      for (final r in rows) {
+        final id = (r['usuario_id'] as num?)?.toInt();
+        final total = (r['total'] as num?)?.toInt() ?? 0;
+        if (id != null) map[id] = total;
+      }
+      return map;
+    } catch (_) {
+      return {};
+    }
   }
 
   // ─────────────────────────────────────────
   // 🔎 FILTROS
   // ─────────────────────────────────────────
   void _aplicarFiltros() {
+    if (!mounted) return;
     final q = _busquedaCtrl.text.trim().toLowerCase();
     final res = _usuarios.where((u) {
       final coincideQ = q.isEmpty ||
@@ -155,9 +196,9 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
     );
 
     if (resultado == null) return;
+    if (!mounted) return;
 
     if (usuario == null) {
-      // Crear
       try {
         await _db.crearUsuario(
           rolId: resultado.rolId,
@@ -175,7 +216,6 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
         return;
       }
     } else {
-      // Editar
       try {
         await _db.rawUpdate('''
           UPDATE usuario SET
@@ -212,6 +252,37 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
   }
 
   // ─────────────────────────────────────────
+  // 🔗 VINCULAR
+  // ─────────────────────────────────────────
+  Future<void> _abrirVinculacion(_UsuarioItem u) async {
+    final rol = u.rolNombre.toUpperCase();
+    final esTutor =
+        rol == 'PADRE' || rol == 'MAESTRO' || rol == 'DOCENTE';
+    final esAlumno = rol == 'NIÑO' || rol == 'NINO';
+
+    if (!esTutor && !esAlumno) {
+      _toast('Este rol no permite vínculos', error: true);
+      return;
+    }
+
+    final cambio = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _VinculacionSheet(
+        db: _db,
+        usuario: u,
+        esTutor: esTutor,
+        todosUsuarios: _usuarios,
+      ),
+    );
+
+    if (cambio == true && mounted) {
+      await _cargarTodo();
+    }
+  }
+
+  // ─────────────────────────────────────────
   // 🗑️ ELIMINAR
   // ─────────────────────────────────────────
   Future<void> _eliminar(_UsuarioItem u) async {
@@ -229,7 +300,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
           '¿Seguro que deseas eliminar a "${u.nombreCompleto}" '
           '(@${u.nombreUsuario})?\n\n'
           'Esta acción borrará también sus estadísticas, evaluaciones, '
-          'inventario, tickets, etc.',
+          'inventario, tickets, vínculos, etc.',
         ),
         actions: [
           TextButton(
@@ -260,7 +331,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
   }
 
   // ─────────────────────────────────────────
-  // 🔒 CAMBIAR ESTADO
+  // 🔒 ESTADO
   // ─────────────────────────────────────────
   Future<void> _cambiarEstado(_UsuarioItem u) async {
     final yo = context.read<LoginViewModel>().usuarioActual;
@@ -445,7 +516,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
                       ),
                     ),
                     Text(
-                      'Crea, edita y administra cuentas',
+                      'Crea, edita, vincula y administra cuentas',
                       style: AppTextStyles.body.copyWith(
                         color: Colors.white70,
                         fontSize: 13.5,
@@ -514,6 +585,8 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
 
   Widget _buildBuscadorYFiltros() {
     final rolesFiltro = ['TODOS', ..._roles.map((r) => r.nombre)];
+    final rolActualValido =
+        rolesFiltro.contains(_filtroRol) ? _filtroRol : 'TODOS';
     return Column(
       children: [
         TextField(
@@ -549,7 +622,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
             Expanded(
               child: _dropdownFiltro(
                 label: 'Rol',
-                valorActual: _filtroRol,
+                valorActual: rolActualValido,
                 opciones: rolesFiltro,
                 onChanged: (v) {
                   setState(() => _filtroRol = v ?? 'TODOS');
@@ -640,6 +713,12 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
     final activo = u.estado == 'ACTIVO';
     final colorRol = _colorPorRol(u.rolNombre);
     final colorEstado = activo ? AppColors.success : AppColors.error;
+    final rol = u.rolNombre.toUpperCase();
+    final esTutor =
+        rol == 'PADRE' || rol == 'MAESTRO' || rol == 'DOCENTE';
+    final esAlumno = rol == 'NIÑO' || rol == 'NINO';
+    final puedeVincular = esTutor || esAlumno;
+    final nVinculos = _conteoVinculos[u.id] ?? 0;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -657,24 +736,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
           children: [
             Row(
               children: [
-                CircleAvatar(
-                  radius: 24,
-                  backgroundColor: colorRol.withOpacity(0.15),
-                  backgroundImage:
-                      u.avatarRuta != null ? AssetImage(u.avatarRuta!) : null,
-                  child: u.avatarRuta == null
-                      ? Text(
-                          u.nombreCompleto.isNotEmpty
-                              ? u.nombreCompleto[0].toUpperCase()
-                              : '?',
-                          style: AppTextStyles.body.copyWith(
-                            color: colorRol,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 18,
-                          ),
-                        )
-                      : null,
-                ),
+                _buildAvatar(u, colorRol),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -738,19 +800,28 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
               ],
             ),
             const SizedBox(height: 8),
-            Row(
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
               children: [
                 _chip(
                   _iconoPorRol(u.rolNombre),
                   u.rolNombre,
                   colorRol,
                 ),
-                const SizedBox(width: 6),
                 _chip(
                   activo ? Icons.check_circle : Icons.block,
                   activo ? 'ACTIVO' : 'RESTRINGIDO',
                   colorEstado,
                 ),
+                if (puedeVincular && nVinculos > 0)
+                  _chip(
+                    Icons.link,
+                    esTutor
+                        ? '$nVinculos niño${nVinculos == 1 ? '' : 's'}'
+                        : '$nVinculos tutor${nVinculos == 1 ? '' : 'es'}',
+                    const Color(0xFF00897B),
+                  ),
               ],
             ),
             const Divider(height: 20),
@@ -808,9 +879,63 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
                 ),
               ],
             ),
+            if (puedeVincular) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () => _abrirVinculacion(u),
+                  icon: const Icon(Icons.link, size: 18),
+                  label: Text(
+                    esTutor
+                        ? 'Vincular niños (${nVinculos})'
+                        : 'Vincular tutores (${nVinculos})',
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00897B),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),
+    );
+  }
+
+  /// Avatar con fallback seguro si el asset no existe.
+  Widget _buildAvatar(_UsuarioItem u, Color colorRol) {
+    final ruta = u.avatarRuta;
+    final inicial = u.nombreCompleto.isNotEmpty
+        ? u.nombreCompleto[0].toUpperCase()
+        : '?';
+
+    if (ruta == null || ruta.isEmpty) {
+      return CircleAvatar(
+        radius: 24,
+        backgroundColor: colorRol.withOpacity(0.15),
+        child: Text(
+          inicial,
+          style: AppTextStyles.body.copyWith(
+            color: colorRol,
+            fontWeight: FontWeight.bold,
+            fontSize: 18,
+          ),
+        ),
+      );
+    }
+
+    return CircleAvatar(
+      radius: 24,
+      backgroundColor: colorRol.withOpacity(0.15),
+      onBackgroundImageError: (_, __) {},
+      backgroundImage: AssetImage(ruta),
+      child: null,
     );
   }
 
@@ -935,7 +1060,7 @@ class _FormUsuarioResult {
 }
 
 // ==========================================
-// 🧩 FORMULARIO MODAL
+// 🧩 FORMULARIO MODAL (sin cambios de estructura)
 // ==========================================
 class _FormUsuarioSheet extends StatefulWidget {
   final List<_RolItem> roles;
@@ -955,23 +1080,16 @@ class _FormUsuarioSheet extends StatefulWidget {
 class _FormUsuarioSheetState extends State<_FormUsuarioSheet> {
   final _formKey = GlobalKey<FormState>();
 
-  // ─── Regex reutilizables ───
-  // Letras unicode (incluye tildes y ñ/Ñ), espacios internos.
-  // No permite números ni símbolos, ni espacios al inicio/fin,
-  // ni dobles espacios seguidos.
   static final RegExp _reSoloLetras = RegExp(
     r"^[a-zA-ZÁÉÍÓÚáéíóúÑñÜü]+(?: [a-zA-ZÁÉÍÓÚáéíóúÑñÜü]+)*$",
   );
 
-  // Username: alfanumérico y guion bajo, debe empezar con letra.
   static final RegExp _reUsername = RegExp(r'^[a-zA-Z][a-zA-Z0-9_]{2,29}$');
 
-  // Correo estándar razonable.
   static final RegExp _reCorreo = RegExp(
     r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$",
   );
 
-  // Contraseña: al menos 1 letra y 1 número.
   static final RegExp _rePassTieneLetra =
       RegExp(r'[A-Za-zÁÉÍÓÚáéíóúÑñÜü]');
   static final RegExp _rePassTieneNumero = RegExp(r'[0-9]');
@@ -1016,18 +1134,20 @@ class _FormUsuarioSheetState extends State<_FormUsuarioSheet> {
   Future<void> _precargarPartesNombre() async {
     final u = widget.usuario;
     if (u == null) return;
-    final rows = await widget.db.rawQuery(
-      'SELECT nombres, ap_paterno, ap_materno FROM usuario WHERE id = ?',
-      [u.id],
-    );
-    if (rows.isEmpty) return;
-    final r = rows.first;
-    if (!mounted) return;
-    setState(() {
-      _nombresCtrl.text = (r['nombres'] as String?) ?? '';
-      _apPaternoCtrl.text = (r['ap_paterno'] as String?) ?? '';
-      _apMaternoCtrl.text = (r['ap_materno'] as String?) ?? '';
-    });
+    try {
+      final rows = await widget.db.rawQuery(
+        'SELECT nombres, ap_paterno, ap_materno FROM usuario WHERE id = ?',
+        [u.id],
+      );
+      if (rows.isEmpty) return;
+      final r = rows.first;
+      if (!mounted) return;
+      setState(() {
+        _nombresCtrl.text = (r['nombres'] as String?) ?? '';
+        _apPaternoCtrl.text = (r['ap_paterno'] as String?) ?? '';
+        _apMaternoCtrl.text = (r['ap_materno'] as String?) ?? '';
+      });
+    } catch (_) {}
   }
 
   @override
@@ -1050,34 +1170,38 @@ class _FormUsuarioSheetState extends State<_FormUsuarioSheet> {
 
     setState(() => _guardando = true);
 
-    // Sanitización
     final nombreUsuarioSan =
         _nombreUsuarioCtrl.text.trim().toLowerCase();
     final correoSan = _correoCtrl.text.trim().toLowerCase();
 
-    // Verificar unicidad de username y correo
-    final existentes = await widget.db.rawQuery('''
-      SELECT id, nombre_usuario, correo FROM usuario
-      WHERE (LOWER(nombre_usuario) = ? OR LOWER(correo) = ?)
-      ${_esEdicion ? 'AND id != ?' : ''}
-    ''', [
-      nombreUsuarioSan,
-      correoSan,
-      if (_esEdicion) widget.usuario!.id,
-    ]);
+    try {
+      final existentes = await widget.db.rawQuery('''
+        SELECT id, nombre_usuario, correo FROM usuario
+        WHERE (LOWER(nombre_usuario) = ? OR LOWER(correo) = ?)
+        ${_esEdicion ? 'AND id != ?' : ''}
+      ''', [
+        nombreUsuarioSan,
+        correoSan,
+        if (_esEdicion) widget.usuario!.id,
+      ]);
 
-    if (existentes.isNotEmpty) {
-      final r = existentes.first;
-      final mismoUser =
-          (r['nombre_usuario'] as String?)?.toLowerCase() == nombreUsuarioSan;
-      if (!mounted) return;
-      setState(() => _guardando = false);
-      _snack(
-        mismoUser
-            ? 'Ese nombre de usuario ya está en uso'
-            : 'Ese correo ya está registrado',
-        error: true,
-      );
+      if (existentes.isNotEmpty) {
+        final r = existentes.first;
+        final mismoUser =
+            (r['nombre_usuario'] as String?)?.toLowerCase() ==
+                nombreUsuarioSan;
+        if (!mounted) return;
+        setState(() => _guardando = false);
+        _snack(
+          mismoUser
+              ? 'Ese nombre de usuario ya está en uso'
+              : 'Ese correo ya está registrado',
+          error: true,
+        );
+        return;
+      }
+    } catch (_) {
+      if (mounted) setState(() => _guardando = false);
       return;
     }
 
@@ -1193,7 +1317,6 @@ class _FormUsuarioSheetState extends State<_FormUsuarioSheet> {
                 ),
                 const SizedBox(height: 20),
 
-                // ─── Rol ───
                 _label('Rol del usuario *'),
                 const SizedBox(height: 6),
                 Wrap(
@@ -1227,7 +1350,6 @@ class _FormUsuarioSheetState extends State<_FormUsuarioSheet> {
                 ),
                 const SizedBox(height: 16),
 
-                // ─── Nombres ───
                 _label('Nombres *'),
                 const SizedBox(height: 6),
                 TextFormField(
@@ -1252,7 +1374,6 @@ class _FormUsuarioSheetState extends State<_FormUsuarioSheet> {
                 ),
                 const SizedBox(height: 12),
 
-                // ─── Apellidos ───
                 Row(
                   children: [
                     Expanded(
@@ -1322,7 +1443,6 @@ class _FormUsuarioSheetState extends State<_FormUsuarioSheet> {
                 ),
                 const SizedBox(height: 12),
 
-                // ─── Username ───
                 _label('Nombre de usuario *'),
                 const SizedBox(height: 6),
                 TextFormField(
@@ -1351,7 +1471,6 @@ class _FormUsuarioSheetState extends State<_FormUsuarioSheet> {
                 ),
                 const SizedBox(height: 12),
 
-                // ─── Correo ───
                 _label('Correo electrónico *'),
                 const SizedBox(height: 6),
                 TextFormField(
@@ -1380,7 +1499,6 @@ class _FormUsuarioSheetState extends State<_FormUsuarioSheet> {
                 ),
                 const SizedBox(height: 12),
 
-                // ─── Contraseña ───
                 _label(_esEdicion
                     ? 'Nueva contraseña (dejar vacío para no cambiar)'
                     : 'Contraseña *'),
@@ -1421,7 +1539,6 @@ class _FormUsuarioSheetState extends State<_FormUsuarioSheet> {
                 ),
                 const SizedBox(height: 16),
 
-                // ─── Estado ───
                 _label('Estado de la cuenta'),
                 const SizedBox(height: 6),
                 Row(
@@ -1445,7 +1562,6 @@ class _FormUsuarioSheetState extends State<_FormUsuarioSheet> {
                 ),
                 const SizedBox(height: 24),
 
-                // ─── Acciones ───
                 Row(
                   children: [
                     Expanded(
@@ -1591,4 +1707,663 @@ class _FormUsuarioSheetState extends State<_FormUsuarioSheet> {
       ),
     );
   }
+}
+
+// ==========================================
+// 🔗 BOTTOM SHEET DE VINCULACIÓN
+// ==========================================
+class _VinculacionSheet extends StatefulWidget {
+  final DatabaseHelper db;
+  final _UsuarioItem usuario;
+  final bool esTutor;
+  final List<_UsuarioItem> todosUsuarios;
+
+  const _VinculacionSheet({
+    required this.db,
+    required this.usuario,
+    required this.esTutor,
+    required this.todosUsuarios,
+  });
+
+  @override
+  State<_VinculacionSheet> createState() => _VinculacionSheetState();
+}
+
+class _VinculacionSheetState extends State<_VinculacionSheet> {
+  bool _loading = true;
+  bool _guardando = false;
+  bool _huboCambios = false;
+
+  List<_VinculoItem> _vinculos = [];
+  int? _seleccionadoParaAgregar;
+
+  @override
+  void initState() {
+    super.initState();
+    _cargarVinculos();
+  }
+
+  Future<void> _cargarVinculos() async {
+    if (mounted) setState(() => _loading = true);
+    try {
+      final v = await _fetchVinculos();
+      if (!mounted) return;
+      setState(() {
+        _vinculos = v;
+        _loading = false;
+        // Si el seleccionado dejó de existir en candidatos, limpiar.
+        if (_seleccionadoParaAgregar != null &&
+            !_candidatos.any((u) => u.id == _seleccionadoParaAgregar)) {
+          _seleccionadoParaAgregar = null;
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _vinculos = [];
+        _loading = false;
+      });
+    }
+  }
+
+  Future<List<_VinculoItem>> _fetchVinculos() async {
+    final List<Map<String, Object?>> rows;
+    if (widget.esTutor) {
+      rows = await widget.db.rawQuery('''
+        SELECT t.id           AS vinculo_id,
+               u.id           AS persona_id,
+               u.nombres,
+               u.ap_paterno,
+               u.ap_materno,
+               u.nombre_usuario,
+               u.correo,
+               t.parentesco,
+               r.nombre       AS rol_nombre
+        FROM tutor_alumno t
+        JOIN usuario u ON u.id = t.alumno_id
+        JOIN rol r     ON r.id = u.rol_id
+        WHERE t.tutor_id = ?
+        ORDER BY u.nombres ASC
+      ''', [widget.usuario.id]);
+    } else {
+      rows = await widget.db.rawQuery('''
+        SELECT t.id           AS vinculo_id,
+               u.id           AS persona_id,
+               u.nombres,
+               u.ap_paterno,
+               u.ap_materno,
+               u.nombre_usuario,
+               u.correo,
+               t.parentesco,
+               r.nombre       AS rol_nombre
+        FROM tutor_alumno t
+        JOIN usuario u ON u.id = t.tutor_id
+        JOIN rol r     ON r.id = u.rol_id
+        WHERE t.alumno_id = ?
+        ORDER BY u.nombres ASC
+      ''', [widget.usuario.id]);
+    }
+
+    return rows.map((r) {
+      final nombres = (r['nombres'] as String?) ?? '';
+      final apPat = (r['ap_paterno'] as String?) ?? '';
+      final apMat = (r['ap_materno'] as String?) ?? '';
+      final full = '$nombres $apPat $apMat'.trim();
+      return _VinculoItem(
+        vinculoId: r['vinculo_id'] as int,
+        personaId: r['persona_id'] as int,
+        nombreCompleto: full.isEmpty
+            ? ((r['nombre_usuario'] as String?) ?? '?')
+            : full,
+        nombreUsuario: (r['nombre_usuario'] as String?) ?? '',
+        correo: (r['correo'] as String?) ?? '',
+        parentesco: r['parentesco'] as String?,
+        rolNombre: (r['rol_nombre'] as String?) ?? '',
+      );
+    }).toList();
+  }
+
+  List<_UsuarioItem> get _candidatos {
+    final idsVinculados = _vinculos.map((v) => v.personaId).toSet();
+    final List<_UsuarioItem> result;
+    if (widget.esTutor) {
+      result = widget.todosUsuarios.where((u) {
+        if (u.id == widget.usuario.id) return false;
+        if (idsVinculados.contains(u.id)) return false;
+        final rol = u.rolNombre.toUpperCase();
+        return rol == 'NIÑO' || rol == 'NINO';
+      }).toList();
+    } else {
+      result = widget.todosUsuarios.where((u) {
+        if (u.id == widget.usuario.id) return false;
+        if (idsVinculados.contains(u.id)) return false;
+        final rol = u.rolNombre.toUpperCase();
+        return rol == 'PADRE' ||
+            rol == 'MAESTRO' ||
+            rol == 'DOCENTE';
+      }).toList();
+    }
+    result.sort((a, b) => a.nombreCompleto
+        .toLowerCase()
+        .compareTo(b.nombreCompleto.toLowerCase()));
+    return result;
+  }
+
+  Future<void> _agregarVinculo() async {
+    final personaId = _seleccionadoParaAgregar;
+    if (personaId == null) {
+      _toast('Selecciona un usuario', error: true);
+      return;
+    }
+    setState(() => _guardando = true);
+    try {
+      final tutorId = widget.esTutor ? widget.usuario.id : personaId;
+      final alumnoId = widget.esTutor ? personaId : widget.usuario.id;
+
+      if (tutorId == alumnoId) {
+        _toast('No puedes vincularte contigo mismo', error: true);
+        setState(() => _guardando = false);
+        return;
+      }
+
+      final existente = await widget.db.rawQuery('''
+        SELECT 1 FROM tutor_alumno
+        WHERE tutor_id = ? AND alumno_id = ?
+        LIMIT 1
+      ''', [tutorId, alumnoId]);
+      if (existente.isNotEmpty) {
+        _toast('Este vínculo ya existe', error: true);
+        setState(() => _guardando = false);
+        return;
+      }
+
+      String parentesco;
+      if (widget.esTutor) {
+        final rolTutor = widget.usuario.rolNombre.toUpperCase();
+        parentesco =
+            rolTutor == 'PADRE' ? 'Padre/Tutor' : 'Maestro/Docente';
+      } else {
+        _UsuarioItem? tutor;
+        for (final u in widget.todosUsuarios) {
+          if (u.id == personaId) {
+            tutor = u;
+            break;
+          }
+        }
+        final rolTutor = (tutor?.rolNombre ?? '').toUpperCase();
+        parentesco =
+            rolTutor == 'PADRE' ? 'Padre/Tutor' : 'Maestro/Docente';
+      }
+
+      await widget.db.vincularTutorAlumno(
+        tutorId: tutorId,
+        alumnoId: alumnoId,
+        parentesco: parentesco,
+      );
+
+      _huboCambios = true;
+      _seleccionadoParaAgregar = null;
+      _toast('Vínculo agregado');
+      await _cargarVinculos();
+    } catch (e) {
+      _toast('Error al vincular: $e', error: true);
+    } finally {
+      if (mounted) setState(() => _guardando = false);
+    }
+  }
+
+  Future<void> _quitarVinculo(_VinculoItem v) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Quitar vínculo'),
+        content: Text(
+          '¿Seguro que quieres desvincular a "${v.nombreCompleto}"?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.error,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Desvincular'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    try {
+      await widget.db.rawDelete(
+        'DELETE FROM tutor_alumno WHERE id = ?',
+        [v.vinculoId],
+      );
+      _huboCambios = true;
+      _toast('Vínculo eliminado');
+      await _cargarVinculos();
+    } catch (e) {
+      _toast('Error al desvincular: $e', error: true);
+    }
+  }
+
+  void _toast(String msg, {bool error = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: error ? AppColors.error : AppColors.success,
+      ),
+    );
+  }
+
+  void _cerrar() {
+    if (!mounted) return;
+    Navigator.of(context).pop(_huboCambios);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final maxHeight = MediaQuery.of(context).size.height * 0.9;
+    final rol = widget.usuario.rolNombre.toUpperCase();
+    final esPadre = rol == 'PADRE';
+    final colorRol = _colorPorRol(widget.usuario.rolNombre);
+
+    final candidatos = _candidatos;
+    final valueDropdown = (() {
+      if (_seleccionadoParaAgregar == null) return null;
+      final existe =
+          candidatos.any((u) => u.id == _seleccionadoParaAgregar);
+      return existe ? _seleccionadoParaAgregar : null;
+    })();
+
+    return Container(
+      constraints: BoxConstraints(maxHeight: maxHeight),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 20,
+          right: 20,
+          top: 12,
+          bottom: bottomInset + 20,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.textSecondary.withOpacity(0.3),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: colorRol.withOpacity(0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      esPadre
+                          ? Icons.family_restroom
+                          : (rol == 'NIÑO' || rol == 'NINO'
+                              ? Icons.child_care
+                              : Icons.school),
+                      color: colorRol,
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.esTutor
+                              ? 'Vincular niños'
+                              : 'Vincular tutores',
+                          style: AppTextStyles.body.copyWith(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          widget.usuario.nombreCompleto.isEmpty
+                              ? '@${widget.usuario.nombreUsuario}'
+                              : '${widget.usuario.nombreCompleto} '
+                                  '(@${widget.usuario.nombreUsuario})',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTextStyles.body.copyWith(
+                            fontSize: 12.5,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Cerrar',
+                    onPressed: _cerrar,
+                    icon: const Icon(Icons.close, color: Colors.black45),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              if (_loading)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: CircularProgressIndicator(),
+                  ),
+                )
+              else ...[
+                Text(
+                  widget.esTutor
+                      ? 'Agregar niño'
+                      : 'Agregar tutor / maestro',
+                  style: AppTextStyles.body.copyWith(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Container(
+                        padding:
+                            const EdgeInsets.symmetric(horizontal: 12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF7F9F7),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: AppColors.textSecondary
+                                .withOpacity(0.2),
+                          ),
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<int>(
+                            isExpanded: true,
+                            value: valueDropdown,
+                            hint: Text(
+                              candidatos.isEmpty
+                                  ? 'No hay candidatos disponibles'
+                                  : 'Selecciona un usuario',
+                              style: AppTextStyles.body.copyWith(
+                                fontSize: 13.5,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                            style: AppTextStyles.body.copyWith(
+                              fontSize: 13.5,
+                              color: AppColors.textPrimary,
+                            ),
+                            items: candidatos.map((u) {
+                              return DropdownMenuItem<int>(
+                                value: u.id,
+                                child: Text(
+                                  u.nombreCompleto.isEmpty
+                                      ? '@${u.nombreUsuario}'
+                                      : '${u.nombreCompleto} '
+                                          '(@${u.nombreUsuario})',
+                                  overflow: TextOverflow.ellipsis,
+                                  style: AppTextStyles.body
+                                      .copyWith(fontSize: 13.5),
+                                ),
+                              );
+                            }).toList(),
+                            onChanged: (v) => setState(
+                                () => _seleccionadoParaAgregar = v),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton.icon(
+                      onPressed:
+                          (_guardando || valueDropdown == null)
+                              ? null
+                              : _agregarVinculo,
+                      icon: _guardando
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.add_link, size: 18),
+                      label: const Text('Vincular'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF00897B),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+
+                Row(
+                  children: [
+                    Icon(Icons.link, size: 18, color: AppColors.primary),
+                    const SizedBox(width: 6),
+                    Text(
+                      widget.esTutor
+                          ? 'Niños vinculados'
+                          : 'Tutores vinculados',
+                      style: AppTextStyles.body.copyWith(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        '${_vinculos.length}',
+                        style: AppTextStyles.body.copyWith(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                if (_vinculos.isEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        vertical: 20, horizontal: 12),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF7F9F7),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color:
+                            AppColors.textSecondary.withOpacity(0.15),
+                      ),
+                    ),
+                    child: Text(
+                      widget.esTutor
+                          ? 'Aún no hay niños vinculados'
+                          : 'Aún no hay tutores vinculados',
+                      style: AppTextStyles.body.copyWith(
+                        fontSize: 13,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  )
+                else
+                  ..._vinculos.map((v) => Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: AppColors.textSecondary
+                                .withOpacity(0.15),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            CircleAvatar(
+                              radius: 18,
+                              backgroundColor: AppColors.primary
+                                  .withOpacity(0.12),
+                              child: Text(
+                                v.nombreCompleto.isNotEmpty
+                                    ? v.nombreCompleto[0].toUpperCase()
+                                    : '?',
+                                style: AppTextStyles.body.copyWith(
+                                  color: AppColors.primary,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    v.nombreCompleto,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: AppTextStyles.body.copyWith(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.textPrimary,
+                                    ),
+                                  ),
+                                  Text(
+                                    '@${v.nombreUsuario}'
+                                    '${v.rolNombre.isNotEmpty ? ' · ${v.rolNombre}' : ''}'
+                                    '${v.parentesco != null && v.parentesco!.isNotEmpty ? ' · ${v.parentesco}' : ''}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: AppTextStyles.body.copyWith(
+                                      fontSize: 11.5,
+                                      color: AppColors.textSecondary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Desvincular',
+                              onPressed: () => _quitarVinculo(v),
+                              icon: const Icon(
+                                Icons.link_off,
+                                color: AppColors.error,
+                              ),
+                              style: IconButton.styleFrom(
+                                backgroundColor:
+                                    AppColors.error.withOpacity(0.08),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )),
+                const SizedBox(height: 20),
+
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: _cerrar,
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      side: BorderSide(
+                        color: AppColors.textSecondary.withOpacity(0.4),
+                      ),
+                      foregroundColor: AppColors.textSecondary,
+                    ),
+                    child: const Text(
+                      'Cerrar',
+                      style: TextStyle(fontSize: 15),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Color _colorPorRol(String rol) {
+    switch (rol.toUpperCase()) {
+      case 'ADMIN':
+        return const Color(0xFF6A1B9A);
+      case 'MAESTRO':
+      case 'DOCENTE':
+        return const Color(0xFF1565C0);
+      case 'PADRE':
+        return const Color(0xFFEF6C00);
+      case 'NIÑO':
+      case 'NINO':
+        return AppColors.success;
+      default:
+        return AppColors.textSecondary;
+    }
+  }
+}
+
+// ==========================================
+// 📦 MODELO DE VÍNCULO
+// ==========================================
+class _VinculoItem {
+  final int vinculoId;
+  final int personaId;
+  final String nombreCompleto;
+  final String nombreUsuario;
+  final String correo;
+  final String? parentesco;
+  final String rolNombre;
+
+  const _VinculoItem({
+    required this.vinculoId,
+    required this.personaId,
+    required this.nombreCompleto,
+    required this.nombreUsuario,
+    required this.correo,
+    required this.parentesco,
+    required this.rolNombre,
+  });
 }
