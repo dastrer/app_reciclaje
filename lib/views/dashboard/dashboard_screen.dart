@@ -11,6 +11,14 @@ import '../inicio/inicio_screen.dart';
 import '../soporte/soporte_screen.dart';
 import '../multimedia/multimedia_screen.dart';
 
+// 🆕 Módulos con pantalla real
+import '../reportes/reportes_screen.dart';
+import '../usuarios/usuarios_screen.dart';
+import '../registros/registros_screen.dart';
+import '../configuracion/configuracion_screen.dart';
+import '../seguimiento/seguimiento_screen.dart';
+import '../parental/parental_screen.dart';
+
 class DashboardScreen extends StatefulWidget {
   /// 🧑 Usuario autenticado
   final UsuarioActual? usuario;
@@ -42,6 +50,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
           .configurarPorRol(widget.usuario?.rolNombre);
       _centrarInicioMobile();
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant DashboardScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Si cambia el rol en caliente, reconfigura los módulos visibles.
+    if (oldWidget.usuario?.rolNombre != widget.usuario?.rolNombre) {
+      context
+          .read<DashboardViewModel>()
+          .configurarPorRol(widget.usuario?.rolNombre);
+    }
   }
 
   @override
@@ -95,56 +114,66 @@ class _DashboardScreenState extends State<DashboardScreen> {
         icon: Icons.support_agent,
         builder: _buildSoporte,
       ),
+
+      // ── Rutas con pantalla real ──
       DashboardModule.gestionUsuarios: const _ModuleConfig(
         label: 'Gestión de Usuarios',
         icon: Icons.manage_accounts,
-        builder: _buildPlaceholderGestionUsuarios,
-      ),
-      DashboardModule.registroEvaluaciones: const _ModuleConfig(
-        label: 'Registro de Evaluaciones',
-        icon: Icons.assignment_add,
-        builder: _buildPlaceholderRegistroEval,
-      ),
-      DashboardModule.controlParental: const _ModuleConfig(
-        label: 'Control Parental',
-        icon: Icons.shield,
-        builder: _buildPlaceholderControlParental,
+        builder: _buildUsuarios,
       ),
       DashboardModule.reportesAdmin: const _ModuleConfig(
         label: 'Reportes',
         icon: Icons.insights,
-        builder: _buildPlaceholderReportes,
+        builder: _buildReportes,
+      ),
+      DashboardModule.registroEvaluaciones: const _ModuleConfig(
+        label: 'Registro de Evaluaciones',
+        icon: Icons.assignment_add,
+        builder: _buildRegistros,
       ),
       DashboardModule.configuracion: const _ModuleConfig(
         label: 'Configuración',
         icon: Icons.settings,
-        builder: _buildPlaceholderConfiguracion,
+        builder: _buildConfiguracion,
+      ),
+      DashboardModule.controlParental: const _ModuleConfig(
+        label: 'Control Parental',
+        icon: Icons.shield,
+        builder: _buildControlParental,
+      ),
+      DashboardModule.seguimientoEvaluaciones: const _ModuleConfig(
+        label: 'Seguimiento de Evaluaciones',
+        icon: Icons.track_changes,
+        builder: _buildSeguimiento,
       ),
     };
   }
 
   // Builders estáticos para poder marcar _ModuleConfig como const
-  static Widget _buildJuegos(BuildContext _) => const JuegosScreen();
+  static Widget _buildJuegos(BuildContext _)       => const JuegosScreen();
   static Widget _buildEvaluaciones(BuildContext _) => const EvaluacionesScreen();
-  static Widget _buildMultimedia(BuildContext _) => const EcoEncartaScreen();
-  static Widget _buildSoporte(BuildContext _) => const SoporteScreen();
-  static Widget _buildPlaceholderGestionUsuarios(BuildContext _) =>
-      const _PlaceholderScreen(title: 'Gestión de Usuarios');
-  static Widget _buildPlaceholderRegistroEval(BuildContext _) =>
-      const _PlaceholderScreen(title: 'Registro de Evaluaciones');
-  static Widget _buildPlaceholderControlParental(BuildContext _) =>
-      const _PlaceholderScreen(title: 'Control Parental');
-  static Widget _buildPlaceholderReportes(BuildContext _) =>
-      const _PlaceholderScreen(title: 'Reportes');
-  static Widget _buildPlaceholderConfiguracion(BuildContext _) =>
-      const _PlaceholderScreen(title: 'Configuración');
+  static Widget _buildMultimedia(BuildContext _)   => const EcoEncartaScreen();
+  static Widget _buildSoporte(BuildContext _)      => const SoporteScreen();
+
+  // 🆕 Builders con pantalla real
+  static Widget _buildUsuarios(BuildContext _)        => const UsuariosScreen();
+  static Widget _buildReportes(BuildContext _)        => const ReportesScreen();
+  static Widget _buildRegistros(BuildContext _)       => const RegistrosScreen();
+  static Widget _buildConfiguracion(BuildContext _)   => const ConfiguracionScreen();
+  static Widget _buildControlParental(BuildContext _) => const ControlParentalScreen();
+  static Widget _buildSeguimiento(BuildContext _)     => const SeguimientoEvaluacionesScreen();
 
   @override
   Widget build(BuildContext context) {
     final dashboardVM = context.watch<DashboardViewModel>();
     final modules = _buildModules(dashboardVM);
     final visibles = dashboardVM.modulosVisibles;
-    final current = dashboardVM.selected;
+
+    // Fallback seguro por si el selected no está en visibles (cambio de rol).
+    final current = visibles.contains(dashboardVM.selected)
+        ? dashboardVM.selected
+        : (visibles.isNotEmpty ? visibles.first : DashboardModule.inicio);
+
     final currentConfig = modules[current]!;
 
     return Scaffold(
@@ -180,7 +209,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       ),
       drawer: _buildDrawer(context, dashboardVM, modules, visibles),
-      body: modules[current]!.builder(context),
+      body: currentConfig.builder(context),
       bottomNavigationBar: _buildResponsiveBottomNavigationBar(
         dashboardVM,
         modules,
@@ -194,38 +223,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
   // 🎭 IDENTIDAD VISUAL POR ROL
   // ==========================================
   _RoleStyle _styleForRole(String? rol) {
-    switch ((rol ?? '').toUpperCase()) {
-      case 'ADMIN':
-        return const _RoleStyle(
-          label: 'Administrador',
-          icon: Icons.admin_panel_settings,
-          gradient: [Color(0xFF6A1B9A), Color(0xFFAB47BC)],
-        );
-      case 'MAESTRO':
-        return const _RoleStyle(
-          label: 'Maestro',
-          icon: Icons.school,
-          gradient: [Color(0xFF1565C0), Color(0xFF42A5F5)],
-        );
-      case 'PADRE':
-        return const _RoleStyle(
-          label: 'Padre / Tutor',
-          icon: Icons.family_restroom,
-          gradient: [Color(0xFFEF6C00), Color(0xFFFFB74D)],
-        );
-      case 'NIÑO':
-        return const _RoleStyle(
-          label: 'Explorador Eco',
-          icon: Icons.child_care,
-          gradient: [Color(0xFF2E7D32), Color(0xFF66BB6A)],
-        );
-      default:
-        return const _RoleStyle(
-          label: 'Usuario',
-          icon: Icons.person,
-          gradient: [Color(0xFF546E7A), Color(0xFF90A4AE)],
-        );
+    final r = (rol ?? '').toUpperCase();
+    if (r.startsWith('ADMIN')) {
+      return const _RoleStyle(
+        label: 'Administrador',
+        icon: Icons.admin_panel_settings,
+        gradient: [Color(0xFF6A1B9A), Color(0xFFAB47BC)],
+      );
     }
+    if (r.startsWith('DOCENTE') || r.startsWith('MAESTRO')) {
+      return const _RoleStyle(
+        label: 'Maestro',
+        icon: Icons.school,
+        gradient: [Color(0xFF1565C0), Color(0xFF42A5F5)],
+      );
+    }
+    if (r.startsWith('PADRE')) {
+      return const _RoleStyle(
+        label: 'Padre / Tutor',
+        icon: Icons.family_restroom,
+        gradient: [Color(0xFFEF6C00), Color(0xFFFFB74D)],
+      );
+    }
+    if (r.startsWith('NIÑO') || r.startsWith('NINO')) {
+      return const _RoleStyle(
+        label: 'Explorador Eco',
+        icon: Icons.child_care,
+        gradient: [Color(0xFF2E7D32), Color(0xFF66BB6A)],
+      );
+    }
+    return const _RoleStyle(
+      label: 'Usuario',
+      icon: Icons.person,
+      gradient: [Color(0xFF546E7A), Color(0xFF90A4AE)],
+    );
   }
 
   // ==========================================
@@ -234,8 +265,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String _nombreCompleto() =>
       widget.usuario?.nombreCompleto ?? 'Usuario Ejemplo';
 
-  String _correo() =>
-      widget.usuario?.correo ?? 'usuario@correo.com';
+  String _correo() => widget.usuario?.correo ?? 'usuario@correo.com';
 
   String? _avatarRuta() => widget.usuario?.avatarRuta;
 
@@ -609,36 +639,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
       );
     }
 
-    return MaterialButton(
-      minWidth: mobile ? 40 : (tablet ? 60 : 80),
-      onPressed: () => dashboardVM.changeModule(module),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            cfg.icon,
-            color: isSelected ? AppColors.primary : AppColors.textSecondary,
-            size: mobile ? 20 : (tablet ? 24 : 28),
-          ),
-          const SizedBox(height: 4),
-          Flexible(
-            child: Text(
-              cfg.label,
-              style: AppTextStyles.body.copyWith(
-                color: isSelected
-                    ? AppColors.primary
-                    : AppColors.textSecondary,
-                fontSize: mobile ? 10 : (tablet ? 12 : 14),
-                fontWeight:
-                    isSelected ? FontWeight.bold : FontWeight.normal,
-              ),
-              textAlign: TextAlign.center,
-              maxLines: tablet ? 2 : 1,
-              overflow: TextOverflow.ellipsis,
+    return Tooltip(
+      message: cfg.label,
+      child: MaterialButton(
+        minWidth: mobile ? 40 : (tablet ? 60 : 80),
+        onPressed: () => dashboardVM.changeModule(module),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              cfg.icon,
+              color: isSelected ? AppColors.primary : AppColors.textSecondary,
+              size: mobile ? 20 : (tablet ? 24 : 28),
             ),
-          ),
-        ],
+            const SizedBox(height: 4),
+            Flexible(
+              child: Text(
+                cfg.label,
+                style: AppTextStyles.body.copyWith(
+                  color: isSelected
+                      ? AppColors.primary
+                      : AppColors.textSecondary,
+                  fontSize: mobile ? 10 : (tablet ? 12 : 14),
+                  fontWeight:
+                      isSelected ? FontWeight.bold : FontWeight.normal,
+                ),
+                textAlign: TextAlign.center,
+                maxLines: tablet ? 2 : 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -672,37 +705,4 @@ class _ModuleConfig {
     required this.icon,
     required this.builder,
   });
-}
-
-// ==========================================
-// 🚧 PLACEHOLDER
-// ==========================================
-class _PlaceholderScreen extends StatelessWidget {
-  final String title;
-  const _PlaceholderScreen({required this.title});
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.construction, size: 64, color: Colors.grey),
-          const SizedBox(height: 16),
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Módulo en construcción',
-            style: TextStyle(color: Colors.grey),
-          ),
-        ],
-      ),
-    );
-  }
 }

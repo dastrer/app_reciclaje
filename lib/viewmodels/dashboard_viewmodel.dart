@@ -8,6 +8,7 @@ enum DashboardModule {
   soporte,
   gestionUsuarios,
   registroEvaluaciones,
+  seguimientoEvaluaciones, // NUEVO (para PADRE)
   controlParental,
   reportesAdmin,
   configuracion,
@@ -28,57 +29,77 @@ class DashboardViewModel extends ChangeNotifier {
     return idx < 0 ? 0 : idx;
   }
 
-  /// Módulos permitidos según el rol.
+  /// Normaliza el rol: mayúsculas + sin acentos + sin espacios.
+  /// Así "Niño", "NIÑO", "nino " y "NINO" caen en la misma rama.
+  String _normalizarRol(String? rol) {
+    if (rol == null) return '';
+    const conAcento = 'ÁÉÍÓÚÜÑ';
+    const sinAcento = 'AEIOUUN';
+    var out = rol.toUpperCase();
+    for (var i = 0; i < conAcento.length; i++) {
+      out = out.replaceAll(conAcento[i], sinAcento[i]);
+    }
+    return out.trim();
+  }
+
+  /// Módulos permitidos según el rol (en el orden en que se muestran).
   List<DashboardModule> get modulosVisibles {
-    switch ((_rolActual ?? '').toUpperCase()) {
+    switch (_normalizarRol(_rolActual)) {
+      // ─────────────────────────────────────────
+      // ADMIN y DOCENTE/MAESTRO comparten módulos
+      // ─────────────────────────────────────────
       case 'ADMIN':
-        return const [
-          DashboardModule.inicio,
-          DashboardModule.juegos,
-          DashboardModule.evaluaciones,
-          DashboardModule.multimedia,
-          DashboardModule.soporte,
-          DashboardModule.gestionUsuarios,
-          DashboardModule.registroEvaluaciones,
-          DashboardModule.reportesAdmin,
-          DashboardModule.configuracion,
-        ];
+      case 'DOCENTE':
       case 'MAESTRO':
         return const [
-          DashboardModule.inicio,
-          DashboardModule.juegos,
-          DashboardModule.evaluaciones,
-          DashboardModule.multimedia,
-          DashboardModule.soporte,
+          DashboardModule.reportesAdmin,
           DashboardModule.gestionUsuarios,
+          DashboardModule.multimedia,
+          DashboardModule.juegos,
+          DashboardModule.inicio,
+          DashboardModule.evaluaciones,
+          DashboardModule.soporte,
           DashboardModule.registroEvaluaciones,
+          DashboardModule.configuracion,
         ];
+
+      // ─────────────────────────────────────────
+      // PADRE
+      // ─────────────────────────────────────────
       case 'PADRE':
         return const [
-          DashboardModule.inicio,
-          DashboardModule.juegos,
-          DashboardModule.evaluaciones,
+          DashboardModule.seguimientoEvaluaciones,
           DashboardModule.multimedia,
+          DashboardModule.inicio,
           DashboardModule.soporte,
-          DashboardModule.registroEvaluaciones,
           DashboardModule.controlParental,
         ];
+
+      // ─────────────────────────────────────────
+      // NIÑO (con o sin tilde)
+      // ─────────────────────────────────────────
       case 'NIÑO':
-      default:
+      case 'NINO':
         return const [
-          DashboardModule.inicio,
-          DashboardModule.juegos,
-          DashboardModule.evaluaciones,
           DashboardModule.multimedia,
+          DashboardModule.juegos,
+          DashboardModule.inicio,
+          DashboardModule.evaluaciones,
           DashboardModule.soporte,
         ];
+
+      default:
+        return const [DashboardModule.inicio];
     }
   }
 
   /// Llamar al iniciar sesión / montar el dashboard.
   void configurarPorRol(String? rol) {
     _rolActual = rol;
-    _selected = DashboardModule.inicio;
+    // Si el módulo actual ya no es visible para el nuevo rol, resetea a inicio.
+    if (!modulosVisibles.contains(_selected)) {
+      _selected = DashboardModule.inicio;
+    }
     notifyListeners();
   }
 
