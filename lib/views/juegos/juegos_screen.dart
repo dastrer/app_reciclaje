@@ -2,20 +2,18 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:audioplayers/audioplayers.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:confetti/confetti.dart';
-import 'package:flame/components.dart'
-    hide Timer, Icon, Positioned, Text, Container, Image, Vector2;
-import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:lottie/lottie.dart';
 import 'package:provider/provider.dart';
 
+import '../../data/database_helper.dart';
+import '../../viewmodels/login_viewmodel.dart';
 import '../../utils/constants.dart';
 
 // ============================================================================
-// 📦 MODELOS Y ESTADO GLOBAL
+// 📦 MODELOS Y ESTADO GLOBAL (PERSISTIDO EN BD)
 // ============================================================================
 
 class EcoGameInfo {
@@ -38,16 +36,58 @@ class EcoGameInfo {
   });
 }
 
+/// Datos de la tienda de materiales (precio por unidad en monedas).
+class MaterialShopItem {
+  final String materia;
+  final IconData icon;
+  final Color color;
+  final int precio;
+  const MaterialShopItem({
+    required this.materia,
+    required this.icon,
+    required this.color,
+    required this.precio,
+  });
+}
+
 class EcoGamesProvider extends ChangeNotifier {
+  final DatabaseHelper _db = DatabaseHelper.instance;
+  final int usuarioId;
+
   int _totalStars = 0;
   int _totalCoins = 0;
   int _ecoLevel = 1;
   final Map<String, int> _highScores = {};
+  Map<String, int> _inventario = {};
+  bool _cargando = true;
+
+  // 🎉 Notificaciones one-shot para que la UI reaccione
+  bool _subioNivelPendiente = false;
+  int _nivelAnterior = 1;
+  Map<String, dynamic>? _ultimoDrop;
+
+  EcoGamesProvider({required this.usuarioId});
 
   int get totalStars => _totalStars;
   int get totalCoins => _totalCoins;
   int get ecoLevel => _ecoLevel;
   Map<String, int> get highScores => _highScores;
+  Map<String, int> get inventario => _inventario;
+  bool get cargando => _cargando;
+  Map<String, dynamic>? get ultimoDrop => _ultimoDrop;
+
+  /// Consume la bandera de level-up (para mostrar animación una sola vez).
+  bool consumirSubioNivel() {
+    if (!_subioNivelPendiente) return false;
+    _subioNivelPendiente = false;
+    return true;
+  }
+
+  Map<String, dynamic>? consumirDrop() {
+    final d = _ultimoDrop;
+    _ultimoDrop = null;
+    return d;
+  }
 
   String get ecoRank {
     if (_ecoLevel < 3) return 'Aprendiz Verde';
@@ -56,27 +96,235 @@ class EcoGamesProvider extends ChangeNotifier {
     return 'Maestro Circular';
   }
 
-  void addStars(int stars) {
-    _totalStars += stars;
-    final newLevel = (_totalStars ~/ 10) + 1;
-    if (newLevel > _ecoLevel) _ecoLevel = newLevel;
-    notifyListeners();
+  /// Estrellas que faltan para el siguiente nivel (0-9).
+  int get estrellasParaSiguienteNivel {
+    final resto = _totalStars % 10;
+    return resto == 0 && _totalStars > 0 ? 10 : 10 - resto;
   }
 
-  void addCoins(int coins) {
+  // ─────────────────────────────────────────
+  // 📥 CARGA DESDE BD
+  // ─────────────────────────────────────────
+  Future<void> cargarDesdeBD() async {
+    _cargando = true;
+    notifyListeners();
+
+    try {
+      final stats = await _db.obtenerEstadistica(usuarioId);
+      if (stats != null) {
+        _totalStars = (stats['total_estrellas'] as num?)?.toInt() ?? 0;
+        _totalCoins = (stats['total_monedas'] as num?)?.toInt() ?? 0;
+        _ecoLevel = (stats['eco_nivel'] as num?)?.toInt() ?? 1;
+      }
+
+      final puntajes = await _db.obtenerPuntajesJuego(usuarioId);
+      _highScores.clear();
+      for (final p in puntajes) {
+        final id = (p['juego_id'] as String?) ?? '';
+        final mejor = (p['mejor_puntaje'] as num?)?.toInt() ?? 0;
+        if (id.isNotEmpty) _highScores[id] = mejor;
+      }
+
+      final inv = await _db.obtenerInventario(usuarioId);
+      _inventario = {
+        for (final row in inv)
+          (row['materia'] as String? ?? ''):
+              (row['cantidad'] as num?)?.toInt() ?? 0,
+      };
+      if (_inventario.isEmpty) {
+        _inventario = {
+          'PET': 20,
+          'Tela': 14,
+          'Papel': 16,
+          'Vidrio': 12,
+          'Orgánico': 18,
+        };
+      }
+    } catch (_) {
+      _inventario = {
+        'PET': 20,
+        'Tela': 14,
+        'Papel': 16,
+        'Vidrio': 12,
+        'Orgánico': 18,
+      };
+    } finally {
+      _cargando = false;
+      notifyListeners();
+    }
+  }
+
+  // ─────────────────────────────────────────
+  // 💾 PERSISTENCIA
+  // ─────────────────────────────────────────
+  /// Suma estrellas y actualiza el nivel. Devuelve `true` si subió de nivel.
+  Future<bool> addStars(int stars) async {
+    if (stars <= 0) return false;
+    _totalStars += stars;
+    final provisionalLevel = (_totalStars ~/ 10) + 1;
+    if (provisionalLevel > _ecoLevel) {
+      _nivelAnterior = _ecoLevel;
+      _ecoLevel = provisionalLevel;
+    }
+    notifyListeners();
+
+    bool subio = false;
+    try {
+      final res = await _db.sumarEstrellas(usuarioId, stars);
+      _totalStars = (res['estrellas'] as int?) ?? _totalStars;
+      _ecoLevel = (res['nivel'] as int?) ?? _ecoLevel;
+      subio = (res['subioNivel'] as bool?) ?? false;
+      if (subio) {
+        _subioNivelPendiente = true;
+      }
+      notifyListeners();
+    } catch (_) {}
+    return subio;
+  }
+
+  Future<void> addCoins(int coins) async {
+    if (coins <= 0) return;
     _totalCoins += coins;
     notifyListeners();
+    try {
+      await _db.sumarMonedas(usuarioId, coins);
+    } catch (_) {}
   }
 
-  void registerScore(String gameId, int score) {
+  Future<void> registerScore(String gameId, int score) async {
     final prev = _highScores[gameId] ?? 0;
     if (score > prev) {
       _highScores[gameId] = score;
-      addStars(1);
     }
     notifyListeners();
+    try {
+      await _db.registrarPuntajeJuego(
+        usuarioId: usuarioId,
+        juegoId: gameId,
+        puntaje: score,
+      );
+      if (score > prev) await addStars(1);
+    } catch (_) {}
+  }
+
+  Future<void> actualizarInventario(String materia, int delta) async {
+    final actual = _inventario[materia] ?? 0;
+    final nuevo = (actual + delta).clamp(0, 999999);
+    _inventario[materia] = nuevo;
+    notifyListeners();
+    try {
+      await _db.actualizarInventario(
+        usuarioId: usuarioId,
+        materia: materia,
+        delta: delta,
+      );
+    } catch (_) {}
+  }
+
+  // ─────────────────────────────────────────
+  // 🎁 DROP ALEATORIO (recompensa post-juego)
+  // ─────────────────────────────────────────
+  Future<Map<String, dynamic>?> otorgarDropAleatorio({
+    int minCantidad = 1,
+    int maxCantidad = 3,
+  }) async {
+    try {
+      final res = await _db.agregarMaterialAleatorio(
+        usuarioId: usuarioId,
+        minCantidad: minCantidad,
+        maxCantidad: maxCantidad,
+      );
+      if (res == null) return null;
+      final materia = res['materia'] as String;
+      final cantidad = res['cantidad'] as int;
+      _inventario[materia] = (_inventario[materia] ?? 0) + cantidad;
+      _ultimoDrop = {'materia': materia, 'cantidad': cantidad};
+      notifyListeners();
+      return _ultimoDrop;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ─────────────────────────────────────────
+  // 🛒 TIENDA DE MATERIALES
+  // ─────────────────────────────────────────
+  Future<bool> comprarMaterial({
+    required String materia,
+    required int cantidad,
+    required int precioUnitario,
+  }) async {
+    if (cantidad <= 0) return false;
+    final total = cantidad * precioUnitario;
+    if (_totalCoins < total) return false;
+
+    // Optimista
+    final coinsAntes = _totalCoins;
+    final invAntes = _inventario[materia] ?? 0;
+    _totalCoins -= total;
+    _inventario[materia] = invAntes + cantidad;
+    notifyListeners();
+
+    try {
+      final ok = await _db.comprarMaterial(
+        usuarioId: usuarioId,
+        materia: materia,
+        cantidad: cantidad,
+        precioUnitario: precioUnitario,
+      );
+      if (!ok) {
+        // Revertir
+        _totalCoins = coinsAntes;
+        _inventario[materia] = invAntes;
+        notifyListeners();
+        return false;
+      }
+      return true;
+    } catch (_) {
+      _totalCoins = coinsAntes;
+      _inventario[materia] = invAntes;
+      notifyListeners();
+      return false;
+    }
   }
 }
+
+// ============================================================================
+// 🛒 CATÁLOGO DE LA TIENDA
+// ============================================================================
+
+const List<MaterialShopItem> _shopItems = [
+  MaterialShopItem(
+    materia: 'PET',
+    icon: Icons.local_drink,
+    color: Color(0xFF1E88E5),
+    precio: 5,
+  ),
+  MaterialShopItem(
+    materia: 'Tela',
+    icon: Icons.checkroom,
+    color: Color(0xFFD81B60),
+    precio: 8,
+  ),
+  MaterialShopItem(
+    materia: 'Papel',
+    icon: Icons.article,
+    color: Color(0xFF6D4C41),
+    precio: 4,
+  ),
+  MaterialShopItem(
+    materia: 'Vidrio',
+    icon: Icons.wine_bar,
+    color: Color(0xFF00897B),
+    precio: 10,
+  ),
+  MaterialShopItem(
+    materia: 'Orgánico',
+    icon: Icons.eco,
+    color: Color(0xFF43A047),
+    precio: 3,
+  ),
+];
 
 // ============================================================================
 // 🎮 PANTALLA PRINCIPAL
@@ -91,7 +339,7 @@ class JuegosScreen extends StatelessWidget {
       title: 'Eco-Factory',
       subtitle: 'El Gran Clasificador',
       description:
-          'Los residuos avanzan por una cinta transportadora. ¡Clasifícalos antes de que caigan!',
+          'Los residuos avanzan por la cinta transportadora. ¡Clasifícalos antes de que caigan!',
       icon: Icons.factory_rounded,
       gradient: [Color(0xFF43A047), Color(0xFF1B5E20)],
       instructions: [
@@ -100,7 +348,7 @@ class JuegosScreen extends StatelessWidget {
         '🟢 Verde = Orgánico · 🔵 Azul = Papel · 🟡 Amarillo = Plástico · 🔴 Rojo = Especiales',
         '❤️ Tienes 3 vidas. Si un residuo llega al final, pierdes una.',
         '⚡ Los aciertos consecutivos suben tu combo y multiplican puntos.',
-        '🚀 La velocidad aumenta a medida que sumas puntos.',
+        '🚀 Al final recibes estrellas + un material aleatorio.',
       ],
     ),
     EcoGameInfo(
@@ -117,7 +365,7 @@ class JuegosScreen extends StatelessWidget {
         '🧠 Elige la acción correcta aplicando Reducir, Reutilizar y Reciclar.',
         '❤️ Tienes 3 vidas. Cada respuesta incorrecta te resta una.',
         '✅ Cada respuesta correcta te da 15 puntos.',
-        '🌍 Completa todos los objetos de cada escena para avanzar.',
+        '🎁 Al completar la misión obtienes estrellas + un material aleatorio.',
       ],
     ),
     EcoGameInfo(
@@ -125,14 +373,14 @@ class JuegosScreen extends StatelessWidget {
       title: 'Eco-Craft',
       subtitle: 'Taller de Reciclaje',
       description:
-          'Combina materias primas recicladas para fabricar nuevos productos y ganar monedas.',
+          'Combina materias primas recicladas para fabricar nuevos productos, ganar monedas y comprar más materiales.',
       icon: Icons.construction_rounded,
       gradient: [Color(0xFFFFB300), Color(0xFFEF6C00)],
       instructions: [
         '📦 Tienes un inventario de materias primas recicladas.',
         '⚙️ Elige una receta y pulsa "Crear" si tienes los insumos.',
         '🪙 Cada crafteo recompensa monedas según los insumos gastados.',
-        '🌱 Los productos más elaborados otorgan más monedas.',
+        '🛒 Usa esas monedas en la tienda para comprar más materiales.',
         '♻️ Así funciona la economía circular: transformar residuos en recursos.',
       ],
     ),
@@ -145,20 +393,26 @@ class JuegosScreen extends StatelessWidget {
       icon: Icons.directions_run_rounded,
       gradient: [Color(0xFFAB47BC), Color(0xFF6A1B9A)],
       instructions: [
-        '🎯 Cada ronda tiene un tipo de residuo objetivo (se mantiene fijo).',
+        '🎯 Cada ronda tiene un tipo de residuo objetivo.',
         '👆 Toca solo los residuos del tipo indicado.',
         '❌ Si tocas un distractor, pierdes una vida.',
         '💧 Si un residuo objetivo llega al fondo, pierdes una vida.',
         '❤️ Tienes 3 vidas.',
-        '⏱️ Tienes 30 segundos para conseguir la mayor puntuación.',
+        '🎁 Al completar la ronda obtienes estrellas + un material aleatorio.',
       ],
     ),
   ];
 
   @override
   Widget build(BuildContext context) {
+    final usuario = context.watch<LoginViewModel>().usuarioActual;
+    if (usuario == null) {
+      return const Center(child: Text('Usuario no autenticado'));
+    }
+
     return ChangeNotifierProvider<EcoGamesProvider>(
-      create: (_) => EcoGamesProvider(),
+      create: (_) =>
+          EcoGamesProvider(usuarioId: usuario.id)..cargarDesdeBD(),
       child: const _EcoGamesHome(),
     );
   }
@@ -170,12 +424,27 @@ class _EcoGamesHome extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<EcoGamesProvider>();
+
+    if (provider.cargando) {
+      return const Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Cargando tu progreso...'),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
         child: Stack(
           children: [
-            // 🌿 Fondo decorativo
             Positioned.fill(
               child: CustomPaint(painter: _HomeBackgroundPainter()),
             ),
@@ -255,7 +524,6 @@ class _EcoGamesHome extends StatelessWidget {
 class _HomeBackgroundPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    // Gradiente base
     final bg = Paint()
       ..shader = const LinearGradient(
         colors: [Color(0xFFE8F5E9), Color(0xFFC8E6C9), Color(0xFFDCEDC8)],
@@ -264,16 +532,18 @@ class _HomeBackgroundPainter extends CustomPainter {
       ).createShader(Rect.fromLTWH(0, 0, size.width, size.height));
     canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), bg);
 
-    // Burbujas decorativas
     final bubble = Paint()
       ..color = Colors.green.withOpacity(0.06)
       ..style = PaintingStyle.fill;
-    canvas.drawCircle(Offset(size.width * 0.85, size.height * 0.15), 120, bubble);
-    canvas.drawCircle(Offset(size.width * 0.1, size.height * 0.4), 160, bubble);
-    canvas.drawCircle(Offset(size.width * 0.9, size.height * 0.75), 100, bubble);
-    canvas.drawCircle(Offset(size.width * 0.2, size.height * 0.9), 140, bubble);
+    canvas.drawCircle(
+        Offset(size.width * 0.85, size.height * 0.15), 120, bubble);
+    canvas.drawCircle(
+        Offset(size.width * 0.1, size.height * 0.4), 160, bubble);
+    canvas.drawCircle(
+        Offset(size.width * 0.9, size.height * 0.75), 100, bubble);
+    canvas.drawCircle(
+        Offset(size.width * 0.2, size.height * 0.9), 140, bubble);
 
-    // Hojas flotantes
     final leaf = Paint()
       ..color = Colors.green.withOpacity(0.08)
       ..style = PaintingStyle.fill;
@@ -420,7 +690,6 @@ class _EcoHeader extends StatelessWidget {
       ),
       child: Stack(
         children: [
-          // Decoración circular dentro del header
           Positioned(
             right: -20,
             top: -20,
@@ -921,7 +1190,56 @@ class _Sfx {
 }
 
 // ============================================================================
-// 🎯 MINIJUEGO 1: ECO-FACTORY (MÁS LARGO Y LENTO + BASURA COTIDIANA)
+// 🎁 WIDGET DE PREMIO DE DROP
+// ============================================================================
+
+class _DropRewardCard extends StatelessWidget {
+  final Map<String, dynamic> drop;
+  const _DropRewardCard({required this.drop});
+
+  @override
+  Widget build(BuildContext context) {
+    final materia = drop['materia'] as String;
+    final cantidad = drop['cantidad'] as int;
+    final shopItem =
+        _shopItems.firstWhere((s) => s.materia == materia, orElse: () {
+      return const MaterialShopItem(
+        materia: 'Material',
+        icon: Icons.inventory_2,
+        color: Color(0xFF757575),
+        precio: 0,
+      );
+    });
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: shopItem.color.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: shopItem.color.withOpacity(0.4)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(shopItem.icon, color: shopItem.color, size: 22),
+          const SizedBox(width: 8),
+          Text(
+            '+$cantidad $materia',
+            style: TextStyle(
+              color: shopItem.color,
+              fontWeight: FontWeight.bold,
+              fontSize: 14,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// 🎯 MINIJUEGO 1: ECO-FACTORY (CON PANTALLA GAME OVER Y DROP)
 // ============================================================================
 
 enum WasteCategory { organic, paper, plastic, special }
@@ -942,9 +1260,7 @@ class _WasteItem {
   });
 }
 
-// 🗑️ Basura cotidiana real que encontramos en casa/calle
 const List<_WasteItem> _allWaste = [
-  // ORGÁNICOS
   _WasteItem(
       name: 'Cáscara plátano',
       icon: Icons.eco,
@@ -969,7 +1285,6 @@ const List<_WasteItem> _allWaste = [
       category: WasteCategory.organic,
       color: Color(0xFF6D4C41),
       bg: Color(0xFFEFEBE9)),
-  // PLÁSTICOS
   _WasteItem(
       name: 'Botella PET',
       icon: Icons.local_drink,
@@ -1000,7 +1315,6 @@ const List<_WasteItem> _allWaste = [
       category: WasteCategory.plastic,
       color: Color(0xFFEF6C00),
       bg: Color(0xFFFFE0B2)),
-  // PAPEL / CARTÓN
   _WasteItem(
       name: 'Periódico',
       icon: Icons.article,
@@ -1031,7 +1345,6 @@ const List<_WasteItem> _allWaste = [
       category: WasteCategory.paper,
       color: Color(0xFF8D6E63),
       bg: Color(0xFFFBE9E7)),
-  // ESPECIALES
   _WasteItem(
       name: 'Pilas AA',
       icon: Icons.battery_alert,
@@ -1056,9 +1369,9 @@ const List<_WasteItem> _allWaste = [
       category: WasteCategory.special,
       color: Color(0xFF880E4F),
       bg: Color(0xFFF8BBD0)),
-    _WasteItem(
+  _WasteItem(
       name: 'Aerosol',
-      icon: Icons.sanitizer,      // ✅ válido (frasco/atomizador)
+      icon: Icons.sanitizer,
       category: WasteCategory.special,
       color: Color(0xFFD32F2F),
       bg: Color(0xFFFFEBEE)),
@@ -1092,9 +1405,7 @@ class _EcoFactoryGameState extends State<EcoFactoryGame>
   bool _gameOver = false;
   _WasteItem? _selected;
 
-  // 🐢 Más lento: 11 segundos base de recorrido
   static const double _travelSeconds = 11.0;
-  // 🕐 Spawn cada 2.4 segundos (más espaciado)
   static const int _spawnMs = 2400;
 
   @override
@@ -1121,7 +1432,6 @@ class _EcoFactoryGameState extends State<EcoFactoryGame>
     _spawnTimer = Timer.periodic(const Duration(milliseconds: _spawnMs), (_) {
       if (_gameOver) return;
       _spawnItem();
-      // 🐢 la velocidad sube MUY lento (máx 1.5)
       _speed = 1.0 + (_score / 60.0).clamp(0.0, 0.5);
     });
     setState(() {});
@@ -1146,7 +1456,10 @@ class _EcoFactoryGameState extends State<EcoFactoryGame>
           _lives--;
           _combo = 0;
         }
-        if (_lives <= 0) _endGame();
+        if (_lives <= 0) {
+          _endGame(win: false);
+          return;
+        }
       });
       _Sfx.wrong();
     } else if (_items.isNotEmpty) {
@@ -1192,11 +1505,12 @@ class _EcoFactoryGameState extends State<EcoFactoryGame>
         _items.remove(target);
         _selected = null;
       });
-      if (_lives <= 0) _endGame();
+      if (_lives <= 0) _endGame(win: false);
     }
   }
 
-  void _endGame() {
+  Future<void> _endGame({required bool win}) async {
+    if (_gameOver) return;
     _gameOver = true;
     _spawnTimer?.cancel();
     if (_tickerActive) {
@@ -1204,10 +1518,170 @@ class _EcoFactoryGameState extends State<EcoFactoryGame>
       _tickerActive = false;
     }
     final provider = context.read<EcoGamesProvider>();
-    provider.registerScore('eco_factory', _score);
-    provider.addStars(2 + (_combo ~/ 5));
+    await provider.registerScore('eco_factory', _score);
+    // Estrellas por desempeño (según combo final)
+    final stars = 2 + (_combo ~/ 5);
+    await provider.addStars(stars);
+    // 🎁 Drop aleatorio
+    final drop = await provider.otorgarDropAleatorio(
+      minCantidad: 1,
+      maxCantidad: 3,
+    );
     _Sfx.win();
+
+    if (!mounted) return;
     setState(() {});
+
+    _mostrarGameOver(
+      score: _score,
+      stars: stars,
+      drop: drop,
+      win: win,
+    );
+  }
+
+  void _mostrarGameOver({
+    required int score,
+    required int stars,
+    Map<String, dynamic>? drop,
+    required bool win,
+  }) {
+    final newRecord = _score > 0 &&
+        context.read<EcoGamesProvider>().highScores['eco_factory'] == _score;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 90,
+              height: 90,
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.12),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.sentiment_very_dissatisfied,
+                  size: 56, color: Colors.red),
+            ),
+            const SizedBox(height: 12),
+            const Text('¡Game Over!',
+                style: TextStyle(
+                    fontSize: 22, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            Text('Te quedaste sin vidas',
+                style: TextStyle(
+                    fontSize: 13, color: Colors.grey.shade700)),
+            const SizedBox(height: 16),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.amber.shade50,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: Colors.amber.shade300),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.emoji_events,
+                      color: Colors.amber, size: 22),
+                  const SizedBox(width: 6),
+                  Text('Puntuación: $score',
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.star_rounded,
+                          color: Color(0xFFFFB300), size: 16),
+                      const SizedBox(width: 4),
+                      Text('+$stars estrellas',
+                          style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF6D4C41))),
+                    ],
+                  ),
+                ),
+                if (newRecord)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: Colors.purple.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.workspace_premium,
+                            color: Colors.purple, size: 16),
+                        SizedBox(width: 4),
+                        Text('¡Nuevo récord!',
+                            style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.purple)),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+            if (drop != null) ...[
+              const SizedBox(height: 14),
+              const Text('¡Recompensa obtenida!',
+                  style: TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              _DropRewardCard(drop: drop),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton.icon(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              Navigator.of(context).pop();
+            },
+            icon: const Icon(Icons.home_outlined),
+            label: const Text('Volver al menú'),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF43A047),
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _startGame();
+            },
+            icon: const Icon(Icons.replay),
+            label: const Text('Reintentar'),
+          ),
+        ],
+      ),
+    );
   }
 
   Color _catColor(WasteCategory c) {
@@ -1630,7 +2104,7 @@ class _FactoryBackgroundPainter extends CustomPainter {
 }
 
 // ============================================================================
-// 🎯 MINIJUEGO 2: BARRIO LIMPIO (CON VIDAS)
+// 🎯 MINIJUEGO 2: BARRIO LIMPIO (CON DROP FINAL)
 // ============================================================================
 
 class _SceneObject {
@@ -1850,7 +2324,7 @@ class _BarrioLimpioGameState extends State<BarrioLimpioGame> {
           });
           _showFeedback(opt.feedback, opt.isCorrect);
           if (_lives <= 0) {
-            _endGame();
+            _endGame(win: false);
             return;
           }
           if (_resolvedCount == _totalObjects) _nextScene();
@@ -1881,25 +2355,46 @@ class _BarrioLimpioGameState extends State<BarrioLimpioGame> {
   }
 
   void _nextScene() {
-    Future.delayed(const Duration(milliseconds: 800), () {
+    Future.delayed(const Duration(milliseconds: 800), () async {
       if (!mounted || _gameOver) return;
       if (_sceneIndex < _scenes.length - 1) {
         setState(() => _sceneIndex++);
       } else {
-        final provider = context.read<EcoGamesProvider>();
-        provider.registerScore('barrio_limpio', _score);
-        provider.addStars(3);
-        _Sfx.win();
-        _showWinDialog();
+        await _endGame(win: true);
       }
     });
   }
 
-  void _endGame() {
+  Future<void> _endGame({required bool win}) async {
+    if (_gameOver) return;
     _gameOver = true;
     final provider = context.read<EcoGamesProvider>();
-    provider.registerScore('barrio_limpio', _score);
-    _Sfx.wrong();
+    await provider.registerScore('barrio_limpio', _score);
+
+    int stars = 0;
+    Map<String, dynamic>? drop;
+    if (win) {
+      stars = 3;
+      await provider.addStars(stars);
+      drop = await provider.otorgarDropAleatorio(
+        minCantidad: 1,
+        maxCantidad: 2,
+      );
+      _Sfx.win();
+    } else {
+      _Sfx.wrong();
+    }
+
+    if (!mounted) return;
+
+    if (win) {
+      _showWinDialog(stars: stars, drop: drop);
+    } else {
+      _showLoseDialog();
+    }
+  }
+
+  void _showLoseDialog() {
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -1958,7 +2453,10 @@ class _BarrioLimpioGameState extends State<BarrioLimpioGame> {
     });
   }
 
-  void _showWinDialog() {
+  void _showWinDialog({
+    required int stars,
+    Map<String, dynamic>? drop,
+  }) {
     final controller =
         ConfettiController(duration: const Duration(seconds: 3));
     showDialog(
@@ -1990,10 +2488,32 @@ class _BarrioLimpioGameState extends State<BarrioLimpioGame> {
                 const SizedBox(height: 8),
                 Text('Puntuación: $_score',
                     style: const TextStyle(fontSize: 16)),
-                const SizedBox(height: 4),
-                Text('Vidas restantes: $_lives',
-                    style: TextStyle(
-                        color: Colors.grey.shade600, fontSize: 12)),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.star_rounded,
+                          color: Color(0xFFFFB300), size: 16),
+                      const SizedBox(width: 4),
+                      Text('+$stars estrellas',
+                          style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF6D4C41))),
+                    ],
+                  ),
+                ),
+                if (drop != null) ...[
+                  const SizedBox(height: 10),
+                  _DropRewardCard(drop: drop),
+                ],
               ],
             ),
             actions: [
@@ -2475,7 +2995,7 @@ class _ActionSheet extends StatelessWidget {
 }
 
 // ============================================================================
-// 🎯 MINIJUEGO 3: ECO-CRAFT
+// 🎯 MINIJUEGO 3: ECO-CRAFT (CON TIENDA)
 // ============================================================================
 
 class _Recipe {
@@ -2507,14 +3027,6 @@ class EcoCraftWidget extends StatefulWidget {
 }
 
 class _EcoCraftWidgetState extends State<EcoCraftWidget> {
-  final Map<String, int> _inventory = {
-    'PET': 20,
-    'Tela': 14,
-    'Papel': 16,
-    'Vidrio': 12,
-    'Orgánico': 18,
-  };
-
   int _score = 0;
   String? _crafting;
   String? _resultName;
@@ -2560,20 +3072,21 @@ class _EcoCraftWidgetState extends State<EcoCraftWidget> {
     ),
   ];
 
-  bool _canCraft(_Recipe r) {
+  bool _canCraft(_Recipe r, Map<String, int> inventario) {
     return r.inputs.entries
-        .every((e) => (_inventory[e.key] ?? 0) >= e.value);
+        .every((e) => (inventario[e.key] ?? 0) >= e.value);
   }
 
   void _craft(_Recipe r) {
-    if (!_canCraft(r)) return;
+    final provider = context.read<EcoGamesProvider>();
+    if (!_canCraft(r, provider.inventario)) return;
     _Sfx.click();
     setState(() {
-      for (final e in r.inputs.entries) {
-        _inventory[e.key] = (_inventory[e.key] ?? 0) - e.value;
-      }
       _crafting = r.name;
     });
+    for (final e in r.inputs.entries) {
+      provider.actualizarInventario(e.key, -e.value);
+    }
     _craftTimer?.cancel();
     _craftTimer = Timer(const Duration(milliseconds: 1200), () {
       if (!mounted) return;
@@ -2584,7 +3097,6 @@ class _EcoCraftWidgetState extends State<EcoCraftWidget> {
         _score += 20;
       });
       final coins = r.coinReward;
-      final provider = context.read<EcoGamesProvider>();
       provider.registerScore('eco_craft', _score);
       provider.addStars(1);
       provider.addCoins(coins);
@@ -2634,7 +3146,8 @@ class _EcoCraftWidgetState extends State<EcoCraftWidget> {
             ),
             const SizedBox(height: 10),
             Text(
-              'Has transformado residuos en un nuevo producto. ¡Así funciona la economía circular!',
+              'Has transformado residuos en un nuevo producto. '
+              'Usa las monedas en la tienda para comprar más materiales.',
               textAlign: TextAlign.center,
               style:
                   TextStyle(color: Colors.grey.shade700, fontSize: 12),
@@ -2651,6 +3164,21 @@ class _EcoCraftWidgetState extends State<EcoCraftWidget> {
     );
   }
 
+  // ─────────────────────────────────────────
+  // 🛒 TIENDA DE MATERIALES
+  // ─────────────────────────────────────────
+  Future<void> _abrirTienda() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => ChangeNotifierProvider.value(
+        value: context.read<EcoGamesProvider>(),
+        child: const _TiendaSheet(),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _craftTimer?.cancel();
@@ -2660,6 +3188,8 @@ class _EcoCraftWidgetState extends State<EcoCraftWidget> {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<EcoGamesProvider>();
+    final inventario = provider.inventario;
+
     return Scaffold(
       backgroundColor: const Color(0xFFFFF8E1),
       body: SafeArea(
@@ -2685,14 +3215,33 @@ class _EcoCraftWidgetState extends State<EcoCraftWidget> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  const Text('📦 Materias Primas',
-                      style: TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.w700)),
+                  Row(
+                    children: [
+                      const Text('📦 Materias Primas',
+                          style: TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w700)),
+                      const Spacer(),
+                      ElevatedButton.icon(
+                        onPressed: _abrirTienda,
+                        icon: const Icon(Icons.storefront, size: 18),
+                        label: const Text('Tienda'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFEF6C00),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                        ),
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 10),
                   Wrap(
                     spacing: 10,
                     runSpacing: 10,
-                    children: _inventory.entries
+                    children: inventario.entries
                         .map((e) =>
                             _InventoryChip(name: e.key, count: e.value))
                         .toList(),
@@ -2764,7 +3313,7 @@ class _EcoCraftWidgetState extends State<EcoCraftWidget> {
                           fontSize: 16, fontWeight: FontWeight.w700)),
                   const SizedBox(height: 10),
                   ..._recipes.map((r) {
-                    final can = _canCraft(r);
+                    final can = _canCraft(r, inventario);
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 10),
                       child: Container(
@@ -2927,7 +3476,223 @@ class _InventoryChip extends StatelessWidget {
 }
 
 // ============================================================================
-// 🎯 MINIJUEGO 4: ECO-RUNNER (CORREGIDO)
+// 🛒 TIENDA (SHEET)
+// ============================================================================
+
+class _TiendaSheet extends StatelessWidget {
+  const _TiendaSheet();
+
+  Future<void> _comprar(
+    BuildContext context,
+    MaterialShopItem item,
+    int cantidad,
+  ) async {
+    final provider = context.read<EcoGamesProvider>();
+    final total = item.precio * cantidad;
+    if (provider.totalCoins < total) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+              'Necesitas $total monedas. Tienes ${provider.totalCoins}.'),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    final ok = await provider.comprarMaterial(
+      materia: item.materia,
+      cantidad: cantidad,
+      precioUnitario: item.precio,
+    );
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok
+              ? 'Compraste $cantidad ${item.materia} por $total monedas'
+              : 'No se pudo completar la compra',
+        ),
+        backgroundColor:
+            ok ? Colors.green.shade700 : Colors.red.shade700,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = context.watch<EcoGamesProvider>();
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+
+    return Container(
+      margin: const EdgeInsets.all(12),
+      padding: EdgeInsets.fromLTRB(20, 16, 20, 20 + bottomInset),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 44,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Icon(Icons.storefront,
+                      color: Color(0xFFEF6C00), size: 26),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Tienda de Materiales',
+                          style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800)),
+                      Text('Compra insumos para Eco-Craft',
+                          style: TextStyle(
+                              fontSize: 12, color: Colors.black54)),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade50,
+                    borderRadius: BorderRadius.circular(20),
+                    border:
+                        Border.all(color: Colors.orange.shade200),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.monetization_on_rounded,
+                          color: Colors.orange, size: 16),
+                      const SizedBox(width: 4),
+                      Text('${provider.totalCoins}',
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFFE65100))),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            ..._shopItems.map((item) {
+              final puede =
+                  provider.totalCoins >= item.precio;
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                      color: item.color.withOpacity(0.3), width: 1.5),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: item.color.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(item.icon,
+                          color: item.color, size: 24),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(item.materia,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14)),
+                          Text(
+                            'Tienes: ${provider.inventario[item.materia] ?? 0}',
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade700),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.monetization_on_rounded,
+                                size: 14, color: Colors.orange),
+                            const SizedBox(width: 3),
+                            Text('${item.precio}',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFFE65100),
+                                    fontSize: 14)),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        ElevatedButton(
+                          onPressed: puede
+                              ? () => _comprar(context, item, 1)
+                              : null,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: item.color,
+                            foregroundColor: Colors.white,
+                            disabledBackgroundColor:
+                                Colors.grey.shade300,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 6),
+                            minimumSize: const Size(0, 32),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          child: const Text('Comprar',
+                              style: TextStyle(fontSize: 12)),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// 🎯 MINIJUEGO 4: ECO-RUNNER (CON DROP FINAL)
 // ============================================================================
 
 class _RunnerItem {
@@ -2968,7 +3733,6 @@ class _EcoRunnerGameState extends State<EcoRunnerGame>
   bool _gameOver = false;
   bool _tickerActive = false;
 
-  // 🐢 Más lento para que el jugador pueda reaccionar
   static const double _baseSpeed = 0.22;
   static const int _spawnMs = 950;
 
@@ -3023,12 +3787,10 @@ class _EcoRunnerGameState extends State<EcoRunnerGame>
 
     _newTarget();
 
-    // 🎯 Cambia de objetivo cada 10 segundos (no al azar) para que sea justo
     _targetTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       if (_gameOver) return;
       setState(() {
         _newTarget();
-        // Limpia items para dar respiro al jugador cuando cambia target
         _items.removeWhere((it) => it.category != _target);
       });
     });
@@ -3090,8 +3852,6 @@ class _EcoRunnerGameState extends State<EcoRunnerGame>
       if (it.y >= 1.0) remove.add(it);
     }
     if (remove.isNotEmpty) {
-      // ⚠️ SOLO pierdes vida si DEJAS PASAR un residuo OBJETIVO.
-      // Los distractores que caen NO te penalizan (son irrelevantes).
       int penalties = 0;
       setState(() {
         for (final r in remove) {
@@ -3120,7 +3880,6 @@ class _EcoRunnerGameState extends State<EcoRunnerGame>
         _items.remove(it);
       });
     } else {
-      // ❌ Tocar un distractor SÍ penaliza
       _Sfx.wrong();
       setState(() {
         _lives--;
@@ -3130,7 +3889,8 @@ class _EcoRunnerGameState extends State<EcoRunnerGame>
     }
   }
 
-  void _endGame({required bool win}) {
+  Future<void> _endGame({required bool win}) async {
+    if (_gameOver) return;
     _gameOver = true;
     _spawn?.cancel();
     _timeLeft?.cancel();
@@ -3141,11 +3901,21 @@ class _EcoRunnerGameState extends State<EcoRunnerGame>
     }
 
     final provider = context.read<EcoGamesProvider>();
-    provider.registerScore('eco_runner', _score);
+    await provider.registerScore('eco_runner', _score);
+
+    int stars = 0;
+    Map<String, dynamic>? drop;
     if (win) {
-      provider.addStars(2 + (_score ~/ 30));
+      stars = 2 + (_score ~/ 30);
+      await provider.addStars(stars);
+      drop = await provider.otorgarDropAleatorio(
+        minCantidad: 1,
+        maxCantidad: 2,
+      );
       _Sfx.win();
     }
+
+    if (!mounted) return;
 
     showDialog(
       context: context,
@@ -3174,10 +3944,33 @@ class _EcoRunnerGameState extends State<EcoRunnerGame>
                     fontSize: 20, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Text('Puntuación: $_score'),
-            const SizedBox(height: 4),
-            Text('Vidas restantes: $_lives',
-                style: TextStyle(
-                    color: Colors.grey.shade600, fontSize: 12)),
+            const SizedBox(height: 8),
+            if (win && stars > 0)
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: Colors.amber.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.star_rounded,
+                        color: Color(0xFFFFB300), size: 16),
+                    const SizedBox(width: 4),
+                    Text('+$stars estrellas',
+                        style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF6D4C41))),
+                  ],
+                ),
+              ),
+            if (drop != null) ...[
+              const SizedBox(height: 10),
+              _DropRewardCard(drop: drop),
+            ],
           ],
         ),
         actions: [

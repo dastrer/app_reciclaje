@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
@@ -16,6 +17,16 @@ class DatabaseHelper {
 
   static Database? _database;
   static Future<Database>? _opening;
+
+  /// Materiales válidos para el inventario Eco-Craft.
+  /// Se usan tanto en el seed inicial como en drops/compras.
+  static const List<String> materialesValidos = [
+    'PET',
+    'Tela',
+    'Papel',
+    'Vidrio',
+    'Orgánico',
+  ];
 
   Future<Database> get database async {
     if (_database != null) return _database!;
@@ -76,7 +87,7 @@ class DatabaseHelper {
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
       await _runDDLv2(db);
-      await _seedRoles(db); // agrega MAESTRO, PADRE, NIÑO si faltan
+      await _seedRoles(db);
       await _seedEstadisticasIniciales(db);
       await _seedDemoUsuarios(db);
     }
@@ -155,7 +166,6 @@ class DatabaseHelper {
   // DDL v2 (NUEVO)
   // ==========================================
   Future<void> _runDDLv2(Database db) async {
-    // 5. ESTADÍSTICA GLOBAL POR USUARIO (1:1)
     await db.execute('''
       CREATE TABLE IF NOT EXISTS usuario_estadistica (
         usuario_id           INTEGER PRIMARY KEY,
@@ -169,7 +179,6 @@ class DatabaseHelper {
       );
     ''');
 
-    // 6. PUNTAJE POR JUEGO
     await db.execute('''
       CREATE TABLE IF NOT EXISTS puntaje_juego (
         id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -186,7 +195,6 @@ class DatabaseHelper {
       );
     ''');
 
-    // 7. INVENTARIO ECO-CRAFT
     await db.execute('''
       CREATE TABLE IF NOT EXISTS inventario_materia (
         id                   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -201,7 +209,6 @@ class DatabaseHelper {
       );
     ''');
 
-    // 8. INTENTO DE EVALUACIÓN
     await db.execute('''
       CREATE TABLE IF NOT EXISTS evaluacion_intento (
         id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -217,7 +224,6 @@ class DatabaseHelper {
       );
     ''');
 
-    // 9. CONTENIDO VISTO (ECOENCARTA)
     await db.execute('''
       CREATE TABLE IF NOT EXISTS contenido_visto (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -232,7 +238,6 @@ class DatabaseHelper {
       );
     ''');
 
-    // 10. TICKET SOPORTE
     await db.execute('''
       CREATE TABLE IF NOT EXISTS ticket_soporte (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -249,7 +254,6 @@ class DatabaseHelper {
       );
     ''');
 
-    // 11. VÍNCULO TUTOR / MAESTRO ↔ ALUMNO
     await db.execute('''
       CREATE TABLE IF NOT EXISTS tutor_alumno (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -337,8 +341,6 @@ class DatabaseHelper {
 
   // ==========================================
   // SEEDER ESTADÍSTICA INICIAL
-  // Crea fila en usuario_estadistica para
-  // cada usuario que aún no la tenga.
   // ==========================================
   Future<void> _seedEstadisticasIniciales(Database db) async {
     final now = DateTime.now().toIso8601String();
@@ -410,7 +412,6 @@ class DatabaseHelper {
 
   // ==========================================
   // SEEDER DEMO: USUARIOS (MAESTROS, PADRES, NIÑOS)
-  // Idempotente: no duplica si ya existen.
   // ==========================================
   Future<void> _seedDemoUsuarios(Database db) async {
     final rolMaestroId = await _getRolId(db, 'MAESTRO');
@@ -425,7 +426,6 @@ class DatabaseHelper {
 
     final now = DateTime.now().toIso8601String();
 
-    // ---- Datos de maestros ----
     final maestros = [
       {
         'username': 'maestro_ana',
@@ -445,7 +445,6 @@ class DatabaseHelper {
       },
     ];
 
-    // ---- Datos de padres ----
     final padres = [
       {
         'username': 'padre_maria',
@@ -473,7 +472,6 @@ class DatabaseHelper {
       },
     ];
 
-    // ---- Datos de niños ----
     final ninos = [
       {
         'username': 'nino_diego',
@@ -509,7 +507,6 @@ class DatabaseHelper {
       },
     ];
 
-    // Insertar maestros
     final maestroIds = <String, int>{};
     for (final m in maestros) {
       final existente = await _getUsuarioIdByUsername(db, m['username']!);
@@ -538,7 +535,6 @@ class DatabaseHelper {
       ''', [id, now]);
     }
 
-    // Insertar padres
     final padreIds = <String, int>{};
     for (final p in padres) {
       final existente = await _getUsuarioIdByUsername(db, p['username']!);
@@ -567,7 +563,6 @@ class DatabaseHelper {
       ''', [id, now]);
     }
 
-    // Insertar niños
     final ninoIds = <String, int>{};
     for (final n in ninos) {
       final existente = await _getUsuarioIdByUsername(db, n['username']!);
@@ -598,11 +593,6 @@ class DatabaseHelper {
     }
 
     // ---- VINCULOS TUTOR ↔ ALUMNO ----
-    // padre_maria → nino_diego
-    // padre_jose → nino_sofia
-    // padre_lucia → nino_mateo
-    // maestro_ana → todos (guía)
-    // maestro_carlos → nino_valentina
     final vinculos = [
       {'tutor': 'padre_maria', 'alumno': 'nino_diego', 'parentesco': 'Madre'},
       {'tutor': 'padre_jose', 'alumno': 'nino_sofia', 'parentesco': 'Padre'},
@@ -647,7 +637,7 @@ class DatabaseHelper {
     }
 
     // ---- PUNTAJES DE JUEGO DEMO ----
-    const juegos = ['reciclaje', 'memoria', 'clasificacion', 'eco_craft'];
+    const juegos = ['eco_factory', 'barrio_limpio', 'eco_craft', 'eco_runner'];
     final puntajesDemo = <String, List<Map<String, int>>>{
       'nino_diego': [
         {'mejor': 850, 'ultimo': 720, 'partidas': 12},
@@ -882,7 +872,7 @@ class DatabaseHelper {
   // HELPERS: USUARIO
   // ==========================================
   Future<Map<String, Object?>?> buscarUsuarioPorCredenciales({
-    required String identificador, // username o correo
+    required String identificador,
     required String contrasena,
   }) async {
     final rows = await rawQuery('''
@@ -919,14 +909,12 @@ class DatabaseHelper {
       contrasena, estado, avatarRuta, now, now,
     ]);
 
-    // Toda cuenta nueva recibe su fila de estadística
     await rawInsert('''
       INSERT OR IGNORE INTO usuario_estadistica
         (usuario_id, total_estrellas, total_monedas, eco_nivel, fecha_actualizacion)
       VALUES (?, 0, 0, 1, ?)
     ''', [id, now]);
 
-    // Si es NIÑO, sembrar inventario
     final rol = await rawQuery(
       'SELECT nombre FROM rol WHERE id = ? LIMIT 1', [rolId]);
     if (rol.isNotEmpty && (rol.first['nombre'] as String?) == 'NIÑO') {
@@ -948,22 +936,67 @@ class DatabaseHelper {
     return rows.isEmpty ? null : rows.first;
   }
 
-  Future<void> sumarEstrellas(int usuarioId, int estrellas) async {
-    final now = DateTime.now().toIso8601String();
-    await rawUpdate('''
-      UPDATE usuario_estadistica
-      SET total_estrellas = total_estrellas + ?,
-          eco_nivel = ((total_estrellas + ?) / 10) + 1,
-          fecha_actualizacion = ?
-      WHERE usuario_id = ?
-    ''', [estrellas, estrellas, now, usuarioId]);
+  /// Suma estrellas y recalcula el nivel eco (cada 10 estrellas = 1 nivel).
+  /// Devuelve el estado resultante para que la UI pueda mostrar el "level up".
+  Future<Map<String, Object?>> sumarEstrellas(
+    int usuarioId,
+    int estrellas,
+  ) async {
+    if (estrellas <= 0) {
+      final actual = await obtenerEstadistica(usuarioId);
+      return {
+        'estrellas': (actual?['total_estrellas'] as num?)?.toInt() ?? 0,
+        'nivel': (actual?['eco_nivel'] as num?)?.toInt() ?? 1,
+        'subioNivel': false,
+      };
+    }
+
+    final db = await database;
+    return db.transaction<Map<String, Object?>>((txn) async {
+      final now = DateTime.now().toIso8601String();
+
+      // Leer antes para saber si subió de nivel
+      final antes = await txn.query(
+        'usuario_estadistica',
+        columns: ['total_estrellas', 'eco_nivel'],
+        where: 'usuario_id = ?',
+        whereArgs: [usuarioId],
+        limit: 1,
+      );
+      final estrellasAntes =
+          antes.isEmpty ? 0 : (antes.first['total_estrellas'] as int? ?? 0);
+      final nivelAntes =
+          antes.isEmpty ? 1 : (antes.first['eco_nivel'] as int? ?? 1);
+
+      // Calcular nuevos valores
+      final estrellasNuevas = estrellasAntes + estrellas;
+      final nivelNuevo = (estrellasNuevas ~/ 10) + 1;
+
+      // Upsert
+      await txn.rawInsert('''
+        INSERT INTO usuario_estadistica
+          (usuario_id, total_estrellas, total_monedas, eco_nivel, fecha_actualizacion)
+        VALUES (?, ?, COALESCE((SELECT total_monedas FROM usuario_estadistica WHERE usuario_id = ?), 0), ?, ?)
+        ON CONFLICT(usuario_id) DO UPDATE SET
+          total_estrellas = excluded.total_estrellas,
+          eco_nivel = excluded.eco_nivel,
+          fecha_actualizacion = excluded.fecha_actualizacion
+      ''', [usuarioId, estrellasNuevas, usuarioId, nivelNuevo, now]);
+
+      return {
+        'estrellas': estrellasNuevas,
+        'nivel': nivelNuevo,
+        'subioNivel': nivelNuevo > nivelAntes,
+      };
+    });
   }
 
   Future<void> sumarMonedas(int usuarioId, int monedas) async {
+    if (monedas == 0) return;
     final now = DateTime.now().toIso8601String();
     await rawUpdate('''
       UPDATE usuario_estadistica
-      SET total_monedas = total_monedas + ?,
+      SET total_monedas = MAX(total_monedas + ?, 0),
           fecha_actualizacion = ?
       WHERE usuario_id = ?
     ''', [monedas, now, usuarioId]);
@@ -979,22 +1012,49 @@ class DatabaseHelper {
     );
   }
 
-  Future<int> registrarPuntajeJuego({
+  /// Registra el puntaje y devuelve el estado resultante
+  /// (incluye si fue nuevo récord, para feedback en UI).
+  Future<Map<String, Object?>> registrarPuntajeJuego({
     required int usuarioId,
     required String juegoId,
     required int puntaje,
   }) async {
-    final now = DateTime.now().toIso8601String();
-    return rawInsert('''
-      INSERT INTO puntaje_juego
-        (usuario_id, juego_id, mejor_puntaje, ultimo_puntaje, partidas, fecha_ultima)
-      VALUES (?, ?, ?, ?, 1, ?)
-      ON CONFLICT(usuario_id, juego_id) DO UPDATE SET
-        mejor_puntaje = MAX(puntaje_juego.mejor_puntaje, excluded.mejor_puntaje),
-        ultimo_puntaje = excluded.ultimo_puntaje,
-        partidas = puntaje_juego.partidas + 1,
-        fecha_ultima = excluded.fecha_ultima
-    ''', [usuarioId, juegoId, puntaje, puntaje, now]);
+    final db = await database;
+    return db.transaction<Map<String, Object?>>((txn) async {
+      final now = DateTime.now().toIso8601String();
+
+      // Leer antes
+      final antes = await txn.query(
+        'puntaje_juego',
+        where: 'usuario_id = ? AND juego_id = ?',
+        whereArgs: [usuarioId, juegoId],
+        limit: 1,
+      );
+      final mejorAntes =
+          antes.isEmpty ? 0 : (antes.first['mejor_puntaje'] as int? ?? 0);
+      final partidasAntes =
+          antes.isEmpty ? 0 : (antes.first['partidas'] as int? ?? 0);
+
+      final mejorNuevo = math.max(mejorAntes, puntaje);
+      final esNuevoRecord = puntaje > mejorAntes;
+
+      await txn.rawInsert('''
+        INSERT INTO puntaje_juego
+          (usuario_id, juego_id, mejor_puntaje, ultimo_puntaje, partidas, fecha_ultima)
+        VALUES (?, ?, ?, ?, 1, ?)
+        ON CONFLICT(usuario_id, juego_id) DO UPDATE SET
+          mejor_puntaje = MAX(puntaje_juego.mejor_puntaje, excluded.mejor_puntaje),
+          ultimo_puntaje = excluded.ultimo_puntaje,
+          partidas = puntaje_juego.partidas + 1,
+          fecha_ultima = excluded.fecha_ultima
+      ''', [usuarioId, juegoId, mejorNuevo, puntaje, now]);
+
+      return {
+        'mejor_puntaje': mejorNuevo,
+        'esNuevoRecord': esNuevoRecord,
+        'partidas': partidasAntes + 1,
+      };
+    });
   }
 
   // ==========================================
@@ -1010,8 +1070,9 @@ class DatabaseHelper {
   Future<void> actualizarInventario({
     required int usuarioId,
     required String materia,
-    required int delta, // + suma, - resta
+    required int delta,
   }) async {
+    if (!materialesValidos.contains(materia)) return;
     final now = DateTime.now().toIso8601String();
     await rawInsert('''
       INSERT INTO inventario_materia
@@ -1021,6 +1082,76 @@ class DatabaseHelper {
         cantidad = MAX(inventario_materia.cantidad + ?, 0),
         fecha_actualizacion = excluded.fecha_actualizacion
     ''', [usuarioId, materia, delta < 0 ? 0 : delta, now, delta]);
+  }
+
+  /// Añade un material aleatorio al inventario del usuario.
+  /// Devuelve un mapa con `materia` y `cantidad`, o `null` si falla.
+  Future<Map<String, dynamic>?> agregarMaterialAleatorio({
+    required int usuarioId,
+    int minCantidad = 1,
+    int maxCantidad = 3,
+  }) async {
+    if (materialesValidos.isEmpty) return null;
+    final rnd = math.Random();
+    final materia = materialesValidos[rnd.nextInt(materialesValidos.length)];
+    final cantidad =
+        minCantidad + rnd.nextInt((maxCantidad - minCantidad + 1).clamp(1, 100));
+    await actualizarInventario(
+      usuarioId: usuarioId,
+      materia: materia,
+      delta: cantidad,
+    );
+    return {'materia': materia, 'cantidad': cantidad};
+  }
+
+  /// Compra un material: descuenta monedas y suma al inventario en una
+  /// transacción atómica. Devuelve `true` si se pudo comprar.
+  Future<bool> comprarMaterial({
+    required int usuarioId,
+    required String materia,
+    required int cantidad,
+    required int precioUnitario,
+  }) async {
+    if (!materialesValidos.contains(materia)) return false;
+    if (cantidad <= 0 || precioUnitario < 0) return false;
+    final total = cantidad * precioUnitario;
+
+    final db = await database;
+    return db.transaction<bool>((txn) async {
+      // Leer saldo actual
+      final rows = await txn.query(
+        'usuario_estadistica',
+        columns: ['total_monedas'],
+        where: 'usuario_id = ?',
+        whereArgs: [usuarioId],
+        limit: 1,
+      );
+      if (rows.isEmpty) return false;
+      final monedas = (rows.first['total_monedas'] as int?) ?? 0;
+      if (monedas < total) return false;
+
+      final now = DateTime.now().toIso8601String();
+
+      // Descontar monedas
+      await txn.rawUpdate('''
+        UPDATE usuario_estadistica
+        SET total_monedas = total_monedas - ?,
+            fecha_actualizacion = ?
+        WHERE usuario_id = ?
+      ''', [total, now, usuarioId]);
+
+      // Sumar material
+      await txn.rawInsert('''
+        INSERT INTO inventario_materia
+          (usuario_id, materia, cantidad, fecha_actualizacion)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(usuario_id, materia) DO UPDATE SET
+          cantidad = inventario_materia.cantidad + excluded.cantidad,
+          fecha_actualizacion = excluded.fecha_actualizacion
+      ''', [usuarioId, materia, cantidad, now]);
+
+      return true;
+    });
   }
 
   // ==========================================
